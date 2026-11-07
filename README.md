@@ -1,6 +1,6 @@
 # AI Office
 
-A static, live 3D office for GitHub Pages. Each team gets a floor. Each bot is a small low-poly character that types, waits, wanders, or sleeps based on messages posted to an [ntfy.sh](https://ntfy.sh) topic.
+A static, live 3D office for GitHub Pages. One team floor is open at a time; the others stay stacked as shells. Bots are glossy toy characters that sit, walk, type, and hop from messages posted to an [ntfy.sh](https://ntfy.sh) topic.
 
 There is no build step. Pages serves this repository as-is. The page loads [three.js](https://github.com/mrdoob/three.js) (MIT) as ES modules from jsDelivr and talks to **no host except `ntfy.sh`**.
 
@@ -70,7 +70,7 @@ curl -fsS --data-binary '{"bot":"Kai","status":"working","step":"Sorting the mor
 
 ## Use the page
 
-Drag to orbit and scroll or pinch to zoom. Reset view frames the whole building. Tap a bot in the room or in the list to focus the camera and read the latest step. Sound is off until you turn it on; the tones are synthesized in the browser. Lighting follows this device’s local time, and the list shows times in that same clock. The last view of a topic is cached in `localStorage` on this device so the room can appear before the network answers.
+Choose a floor in the list. The open floor eases into place over about 700ms; use − / + or scroll to zoom, and drag to orbit. Tap a bot for a detail card with its status, how long it has been in that status, and its latest step. The same list is in the page, outside the 3D view. Sound is off until you turn it on. The topic in the hash is never shown. The last view of a topic is cached in `localStorage` on this device so the room can appear before the network answers. Known teams are Ops, Research, Web Dev, and Design; each has its own corner of the floor.
 
 ## Enable GitHub Pages
 
@@ -100,7 +100,7 @@ three.js is © The three.js Authors and is used under the MIT license from jsDel
 
 # AI Office（繁體中文）
 
-這是一個給 GitHub Pages 用的靜態、即時 3D 辦公室。每個團隊一層樓。每個機器人是一隻低面數的小角色，會依你貼到 [ntfy.sh](https://ntfy.sh) 主題的訊息，坐在桌前打字、等待、閒逛或睡覺。
+這是一個給 GitHub Pages 用的靜態、即時 3D 辦公室。一次打開一個團隊的樓層，其他樓層收成外殼疊在下面。機器人是光滑的玩具角色，會依你貼到 [ntfy.sh](https://ntfy.sh) 主題的訊息坐下、走動、打字或跳一下。
 
 不需要建置。Pages 直接提供這個儲存庫的檔案。頁面以 ES module 從 jsDelivr 載入 [three.js](https://github.com/mrdoob/three.js)（MIT），**除了 `ntfy.sh` 之外不連任何主機**。
 
@@ -170,7 +170,7 @@ curl -fsS --data-binary '{"bot":"Kai","status":"working","step":"Sorting the mor
 
 ## 怎麼操作
 
-拖曳可以環繞，滾輪或雙指可以縮放。Reset view 會把整棟樓放回畫面。點房間裡或清單裡的機器人，攝影機會靠過去並顯示最新的 step。音效預設關閉，打開之後由瀏覽器自己合成。光線依這台裝置的本地時間變化，清單上的時間也是同一座時鐘。某個主題最後一次的狀態會存在這台裝置的 `localStorage`，網路回應之前房間就能先出現。
+在清單裡選樓層，打開的那一層會在大約 700 毫秒內移到最上面。用 − / +、滾輪或雙指縮放，拖曳可以環繞。點一個機器人會打開詳情卡，裡面有狀態、持續時間和最新的 step。同一份清單也在 3D 畫面外面，讀屏可以用。音效預設關閉。網址 hash 裡的主題不會顯示在畫面上。已知的團隊是 Ops、Research、Web Dev、Design，各自有不同的樓層角落。某個主題最後一次的狀態會存在這台裝置的 `localStorage`，網路回應之前房間就能先出現。
 
 ## 啟用 GitHub Pages
 
