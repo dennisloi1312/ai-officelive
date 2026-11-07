@@ -300,6 +300,7 @@ export function createOffice(stage, hooks) {
   scene.background = new THREE.Color('#F2F2F0');
   const camera = new THREE.OrthographicCamera(-8, 8, 6, -6, 0.1, 80);
   camera.position.set(16, 16, 16);
+  const ISO = new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(24);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 2.2, 0);
   controls.enableDamping = true;
@@ -312,6 +313,19 @@ export function createOffice(stage, hooks) {
   controls.zoomSpeed = 0.7;
   controls.rotateSpeed = 0.55;
   camera.lookAt(controls.target);
+  const phoneQuery = window.matchMedia('(max-width: 640px)');
+  function phoneLayout() {
+    return phoneQuery.matches;
+  }
+  function syncControls() {
+    const phone = phoneLayout();
+    controls.enabled = !phone;
+    controls.enableRotate = !phone;
+    controls.enablePan = false;
+  }
+  syncControls();
+  phoneQuery.addEventListener('change', syncControls);
+  renderer.domElement.style.touchAction = 'none';
 
   const hemi = new THREE.HemisphereLight('#ffffff', '#d5d8e0', 1.05);
   const ambient = new THREE.AmbientLight('#ffffff', 0.45);
@@ -403,6 +417,7 @@ export function createOffice(stage, hooks) {
   const desiredTarget = new THREE.Vector3();
   let snapped = false;
   let userZoomed = false;
+  const pan = new THREE.Vector3();
 
   function buildInterior(parent, floor) {
     addCurtain(parent, mats, W - 0.8, 2.7, 0, -D / 2 + 0.28, 0);
@@ -585,6 +600,7 @@ export function createOffice(stage, hooks) {
       to: poseTargets(active),
     };
     userZoomed = false;
+    pan.set(0, 0, 0);
     frameFloor();
   }
 
@@ -620,18 +636,74 @@ export function createOffice(stage, hooks) {
     return hits.length ? hits[0].object.userData.botName || null : null;
   }
 
-  const down = { active: false, id: 0, x: 0, y: 0 };
+  const down = { active: false, id: 0, x: 0, y: 0, moved: false };
+  const pointers = new Map();
+  let pinchDist = 0;
+  let pinchZoom = 1;
+
+  function touchDistance() {
+    const pts = [...pointers.values()];
+    if (pts.length < 2) return 0;
+    return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+  }
+
+  function panPixels(dx, dy) {
+    camera.updateMatrixWorld();
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+    const camUp = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+    right.y = 0;
+    camUp.y = 0;
+    if (right.lengthSq() < 1e-8 || camUp.lengthSq() < 1e-8) return;
+    right.normalize();
+    camUp.normalize();
+    const height = Math.max(1, renderer.domElement.clientHeight);
+    const scale = (camera.top - camera.bottom) / (camera.zoom * height);
+    pan.x = THREE.MathUtils.clamp(pan.x + (-dx * right.x + dy * camUp.x) * scale, -9, 9);
+    pan.z = THREE.MathUtils.clamp(pan.z + (-dx * right.z + dy * camUp.z) * scale, -9, 9);
+  }
+
   renderer.domElement.addEventListener('wheel', () => {
     userZoomed = true;
     zoomAnim = null;
   }, { passive: true });
   renderer.domElement.addEventListener('pointerdown', (event) => {
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    renderer.domElement.setPointerCapture?.(event.pointerId);
+    if (phoneLayout()) {
+      dragging = true;
+      down.moved = pointers.size > 1 || down.moved;
+      if (pointers.size === 2) {
+        pinchDist = touchDistance();
+        pinchZoom = camera.zoom;
+        userZoomed = true;
+        zoomAnim = null;
+      } else if (pointers.size === 1) {
+        down.active = true;
+        down.id = event.pointerId;
+        down.x = event.clientX;
+        down.y = event.clientY;
+        down.moved = false;
+      }
+      return;
+    }
     down.active = true;
     down.id = event.pointerId;
     down.x = event.clientX;
     down.y = event.clientY;
+    down.moved = false;
   });
   renderer.domElement.addEventListener('pointerup', (event) => {
+    pointers.delete(event.pointerId);
+    if (phoneLayout()) {
+      dragging = pointers.size > 0;
+      if (pointers.size < 2) pinchDist = 0;
+      if (pointers.size === 0 && event.pointerId === down.id && !down.moved) {
+        const dx = event.clientX - down.x;
+        const dy = event.clientY - down.y;
+        if (dx * dx + dy * dy <= 49) hooks.onPick(pick(event.clientX, event.clientY));
+      }
+      return;
+    }
     if (!down.active || event.pointerId !== down.id) return;
     const dx = event.clientX - down.x;
     const dy = event.clientY - down.y;
@@ -640,12 +712,35 @@ export function createOffice(stage, hooks) {
     hooks.onPick(pick(event.clientX, event.clientY));
   });
   renderer.domElement.addEventListener('pointermove', (event) => {
+    if (phoneLayout() && pointers.has(event.pointerId)) {
+      const prev = pointers.get(event.pointerId);
+      const dx = event.clientX - prev.x;
+      const dy = event.clientY - prev.y;
+      prev.x = event.clientX;
+      prev.y = event.clientY;
+      if (dx || dy) down.moved = true;
+      if (pointers.size >= 2 && pinchDist > 0) {
+        const span = touchDistance();
+        camera.zoom = THREE.MathUtils.clamp(pinchZoom * (span / pinchDist), controls.minZoom, controls.maxZoom);
+        camera.updateProjectionMatrix();
+        userZoomed = true;
+        zoomAnim = null;
+      } else if (pointers.size === 1) {
+        panPixels(dx, dy);
+      }
+      return;
+    }
     if (event.pointerType === 'touch') return;
     const name = pick(event.clientX, event.clientY);
     if (name !== hovered) {
       hovered = name;
       renderer.domElement.style.cursor = name ? 'pointer' : '';
     }
+  });
+  renderer.domElement.addEventListener('pointercancel', (event) => {
+    pointers.delete(event.pointerId);
+    dragging = pointers.size > 0;
+    if (pointers.size < 2) pinchDist = 0;
   });
   renderer.domElement.addEventListener('pointerleave', () => {
     hovered = null;
@@ -830,8 +925,13 @@ export function createOffice(stage, hooks) {
     desiredTarget.set(0, focusY, 0.15);
     if (!snapped) {
       controls.target.copy(desiredTarget);
-      camera.position.copy(desiredTarget).add(new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(24));
+      camera.position.copy(desiredTarget).add(ISO);
+      camera.lookAt(controls.target);
       snapped = true;
+    } else if (phoneLayout()) {
+      controls.target.set(desiredTarget.x + pan.x, desiredTarget.y, desiredTarget.z + pan.z);
+      camera.position.copy(controls.target).add(ISO);
+      camera.lookAt(controls.target);
     } else {
       controls.target.y = desiredTarget.y;
       controls.target.z = desiredTarget.z;
@@ -843,7 +943,7 @@ export function createOffice(stage, hooks) {
       if (t >= 1) zoomAnim = null;
       camera.updateProjectionMatrix();
     }
-    controls.update();
+    if (!phoneLayout()) controls.update();
 
     for (const record of records) {
       const level = levels.find((item) => item.key === record.floorKey);

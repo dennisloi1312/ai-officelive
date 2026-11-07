@@ -65,7 +65,7 @@ a:focus-visible {
   inset: 0;
 }
 
-.stage .view { z-index: 0; }
+.stage .view { z-index: 0; touch-action: none; }
 
 .stage .labels {
   z-index: 1;
