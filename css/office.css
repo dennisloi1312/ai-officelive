@@ -700,7 +700,16 @@ body:has(#banner:not([hidden])) #left { top: 156px; }
   max-width: 180px;
 }
 
-.bubble.alert { color: #1C1C20; background: var(--waiting); font-weight: 700; }
+.bubble.alert {
+  color: #1C1C20;
+  background: var(--waiting);
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1;
+  min-width: 22px;
+  padding: 3px 7px;
+  text-align: center;
+}
 .bubble.bad { color: #1C1C20; background: var(--error); font-weight: 700; }
 .bubble.sleep,
 .bubble.sleep .z {

@@ -706,7 +706,6 @@ export function createOffice(stage, hooks) {
     }
     controls.update();
 
-    let chosen = null;
     for (const record of records) {
       const level = levels.find((item) => item.key === record.floorKey);
       const shown = level && level.interior.visible;
@@ -727,6 +726,8 @@ export function createOffice(stage, hooks) {
         showName: hovered === record.name || selected === record.name,
         step: presentation.step,
         status: presentation.status,
+        hovered: hovered === record.name,
+        selected: selected === record.name,
         hold: !!motion || dragging,
       });
       const screen = record.screenMat;
@@ -736,25 +737,8 @@ export function createOffice(stage, hooks) {
         screen.emissiveIntensity = working ? 0.55 + Math.sin(elapsed * 4 + record.visual.phase) * 0.2 : 0.2;
         screen.color.set(working ? '#e0f2fe' : '#334155');
       }
-      if (selected === record.name) chosen = record;
     }
-    if (chosen) {
-      const level = levels.find((item) => item.key === chosen.floorKey);
-      const presentation = presentBot(state?.bots[chosen.name], now, chosen.name);
-      const ringColor = {
-        working: '#34C759',
-        waiting_user: '#F5A524',
-        error: '#FF5A5F',
-        done: '#5AA9FF',
-        idle: '#A1A1AA',
-      }[presentation.status] || '#A1A1AA';
-      ring.material.color.set(ringColor);
-      chosen.visual.root.getWorldPosition(ring.position);
-      if (level) ring.position.y = level.y + BASE + 0.06;
-      ring.visible = true;
-    } else {
-      ring.visible = false;
-    }
+    ring.visible = false;
 
     sun.target.position.set(0, focusY, 0);
     sun.target.updateMatrixWorld();
