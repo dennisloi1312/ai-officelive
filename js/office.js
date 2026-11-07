@@ -109,13 +109,17 @@ function makeMaterials() {
 
 function addPlant(parent, mats, x, z, scale) {
   const group = new THREE.Group();
-  const pot = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.16 * scale, 0.12 * scale, 0.22 * scale, 18), mats.white));
-  pot.position.y = 0.11 * scale;
-  const crown = shade(new THREE.Mesh(new THREE.SphereGeometry(0.26 * scale, 16, 12), mats.leaf));
-  crown.position.y = 0.42 * scale;
-  const bud = shade(new THREE.Mesh(new THREE.SphereGeometry(0.15 * scale, 12, 10), mats.leafDark));
-  bud.position.set(0.1 * scale, 0.55 * scale, 0.04 * scale);
-  group.add(pot, crown, bud);
+  const pot = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.2 * scale, 0.16 * scale, 0.18 * scale, 18), mats.desk));
+  pot.position.y = 0.09 * scale;
+  const lip = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.22 * scale, 0.2 * scale, 0.05 * scale, 18), mats.white));
+  lip.position.y = 0.18 * scale;
+  const trunk = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.035 * scale, 0.045 * scale, 0.16 * scale, 8), mats.leg));
+  trunk.position.y = 0.26 * scale;
+  const crown = shade(new THREE.Mesh(new THREE.SphereGeometry(0.11 * scale, 14, 10), mats.leaf));
+  crown.position.y = 0.38 * scale;
+  const bud = shade(new THREE.Mesh(new THREE.SphereGeometry(0.07 * scale, 10, 8), mats.leafDark));
+  bud.position.set(0.08 * scale, 0.34 * scale, 0.04 * scale);
+  group.add(pot, lip, trunk, crown, bud);
   group.position.set(x, 0, z);
   parent.add(group);
 }

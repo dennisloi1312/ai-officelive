@@ -153,7 +153,7 @@ export function createCharacter(name) {
     new THREE.MeshBasicMaterial({ color: '#34C759', side: THREE.DoubleSide, toneMapped: false }),
   );
   ring.rotation.x = -Math.PI / 2;
-  ring.position.y = 0.03;
+  ring.position.y = -1;
   ring.visible = false;
   const halo = new THREE.Mesh(
     sharedGeo('select-ring', () => new THREE.RingGeometry(0.48, 0.54, s === 20 ? 32 : 48)),
@@ -167,7 +167,7 @@ export function createCharacter(name) {
     }),
   );
   halo.rotation.x = -Math.PI / 2;
-  halo.position.y = 0.028;
+  halo.position.y = -1;
   halo.visible = false;
   root.add(ring, halo);
 
@@ -189,6 +189,14 @@ export function createCharacter(name) {
   const alertTag = new CSS2DObject(alertEl);
   alertTag.visible = false;
   root.add(alertTag);
+  const errorEl = el('div', 'bubble bad', '×');
+  const errorTag = new CSS2DObject(errorEl);
+  errorTag.visible = false;
+  root.add(errorTag);
+  const doneEl = el('div', 'bubble done-mark', '✓');
+  const doneTag = new CSS2DObject(doneEl);
+  doneTag.visible = false;
+  root.add(doneTag);
 
   const sleepEl = el('div', 'bubble sleep');
   sleepEl.style.color = '#8E8E93';
@@ -219,6 +227,8 @@ export function createCharacter(name) {
     stepEl,
     stepTag,
     alertTag,
+    errorTag,
+    doneTag,
     sleepTag,
     stepShown: '',
     foot,
@@ -273,7 +283,7 @@ export function updateCharacter(visual, ctx) {
 
   visual.root.position.x = motion.x;
   visual.root.position.z = motion.z;
-  const bob = walking && motion.moving && !reduce ? Math.sin((t / 0.28) * Math.PI * 2 + phase) * 0.012 : 0;
+  const bob = walking && motion.moving && !reduce ? Math.sin((t / 0.28) * Math.PI * 2 + phase) * 0.022 : 0;
   const targetY = sitting ? sitY : walkY;
   visual.root.position.y = damp(visual.root.position.y, targetY, 10, dt) + bob;
 
@@ -281,7 +291,7 @@ export function updateCharacter(visual, ctx) {
   let spin = yaw - yawNow;
   while (spin > Math.PI) spin -= Math.PI * 2;
   while (spin < -Math.PI) spin += Math.PI * 2;
-  yawNow += spin * (1 - Math.exp(-10 * dt));
+  yawNow += spin * (1 - Math.exp(-16 * dt));
   motion.yaw = yawNow;
   visual.root.rotation.y = yawNow;
 
@@ -289,7 +299,7 @@ export function updateCharacter(visual, ctx) {
   const nod = ctx.nod ? Math.sin(Math.min(ctx.nod, 1) * Math.PI) * 0.22 : 0;
   const lean = sitting ? 0.16 * motion.sit : nod;
   visual.pose.rotation.x = damp(visual.pose.rotation.x, lean, 10, dt);
-  const stepLean = walking && motion.moving && !reduce ? Math.sin((t / 0.28) * Math.PI * 2 + phase) * 0.045 : 0;
+  const stepLean = walking && motion.moving && !reduce ? Math.sin((t / 0.28) * Math.PI * 2 + phase) * 0.07 : 0;
   visual.pose.rotation.z = stepLean;
 
   if (mode === 'error' && motion.mode !== 'error') motion.shake = 0;
@@ -303,8 +313,14 @@ export function updateCharacter(visual, ctx) {
   }
 
   const status = ctx.status || 'idle';
-  const ringOn = Object.prototype.hasOwnProperty.call(STATUS_RING, status);
+  const resting = status === 'idle';
+  const ringOn = !resting && Object.prototype.hasOwnProperty.call(STATUS_RING, status);
   const selected = !!ctx.selected;
+  const floorY = 0.03 - visual.root.position.y;
+  visual.ring.position.y = floorY;
+  visual.halo.position.y = floorY - 0.004;
+  visual.ring.rotation.set(-Math.PI / 2, 0, 0);
+  visual.halo.rotation.set(-Math.PI / 2, 0, 0);
   visual.ring.visible = ringOn;
   visual.halo.visible = ringOn && selected;
   if (ringOn) {
@@ -314,10 +330,14 @@ export function updateCharacter(visual, ctx) {
     visual.halo.scale.setScalar(scale);
   }
 
-  const alertOn = mode === 'waiting';
+  const alertOn = status === 'waiting_user';
   visual.alertTag.visible = alertOn;
   const hop = alertOn && !hold && (t % 2) < 0.35 ? Math.sin(((t % 2) / 0.35) * Math.PI) * 0.06 : 0;
   visual.alertTag.position.set(0.02, visual.foot + 0.28 + hop, 0);
+  visual.errorTag.visible = status === 'error';
+  visual.errorTag.position.set(0.02, visual.foot + 0.28, 0);
+  visual.doneTag.visible = status === 'done';
+  visual.doneTag.position.set(0.02, visual.foot + 0.28, 0);
   const step = ctx.showStep ? String(ctx.step || '').slice(0, 80) : '';
   if (visual.stepShown !== step) {
     visual.stepEl.textContent = step;
@@ -325,7 +345,7 @@ export function updateCharacter(visual, ctx) {
   }
   visual.stepTag.visible = Boolean(step);
   visual.stepTag.position.set(0, visual.foot + 0.46, 0);
-  visual.sleepTag.visible = mode === 'sleep' && sitting && !motion.moving;
+  visual.sleepTag.visible = resting && sitting && !motion.moving;
   visual.sleepTag.position.set(0.16, visual.foot + 0.32, 0);
   visual.nameTag.visible = !!ctx.showName;
   visual.nameTag.position.set(0, visual.foot + 0.38, 0);
