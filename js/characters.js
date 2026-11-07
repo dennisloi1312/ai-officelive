@@ -352,12 +352,12 @@ export function updateCharacter(visual, ctx) {
     motion.ready = true;
     motion.x = ctx.seat.x;
     motion.z = ctx.seat.z;
-    visual.root.position.set(ctx.seat.x, 0.46, ctx.seat.z);
+    visual.root.position.set(ctx.seat.x, 0.42, ctx.seat.z);
   }
 
   let targetX = ctx.seat.x;
   let targetZ = ctx.seat.z;
-  let targetY = 0.46;
+  let targetY = 0.42;
   let yaw = 0.15;
   let rotX = 0;
   let hop = 0;
@@ -386,7 +386,7 @@ export function updateCharacter(visual, ctx) {
   } else if (mode === 'celebrate') {
     const u = ctx.celebrateT || 0;
     hop = Math.abs(Math.sin(u * Math.PI * 3)) * (1 - u) * (reduce ? 0 : 0.42);
-    targetY = 0.46 + hop;
+    targetY = 0.42 + hop;
   }
 
   motion.x = damp(motion.x, targetX, lambda, dt);

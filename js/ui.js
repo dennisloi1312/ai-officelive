@@ -52,7 +52,10 @@ function tally(state, now) {
 }
 
 function countLine(parts) {
-  return parts.filter((part) => part.value > 0).map((part) => `${part.value} ${part.label}`).join(' · ') || 'Quiet';
+  return parts.filter((part) => part.value > 0).map((part) => {
+    const word = part.value === 1 && part.one ? part.one : part.label;
+    return `${part.value} ${word}`;
+  }).join(' · ');
 }
 
 export function mountUI(hooks) {
@@ -71,6 +74,9 @@ export function mountUI(hooks) {
 
   let view = { state: null, floorIndex: 0, selected: null };
   let rendered = '';
+  let bannerKind = 'live';
+  let hintDismissed = false;
+  let hintCollapsed = window.matchMedia('(max-width: 640px)').matches;
   const open = { waiting: true, finished: false, routines: false };
 
   soundBtn.addEventListener('click', () => hooks.onSound());
@@ -91,6 +97,14 @@ export function mountUI(hooks) {
   function views(now) {
     const state = view.state;
     return state.roster.map((name) => ({ name, ...presentBot(state.bots[name], now, name) }));
+  }
+
+  function thumbnail(look) {
+    const node = el('span', `thumb thumb-${look.shape || 'sphere'}`);
+    node.style.background = look.color;
+    node.setAttribute('aria-hidden', 'true');
+    node.append(el('i', 'eye'), el('i', 'eye'));
+    return node;
   }
 
   function avatar(name, look) {
@@ -114,7 +128,7 @@ export function mountUI(hooks) {
       text.appendChild(step);
     }
     const tone = item.status === 'waiting_user' ? 'waiting' : item.status;
-    const status = el('span', `status-label tone-${tone}`);
+    const status = el('span', `status-pill tone-${tone}`);
     const mark = el('span', `status-dot dot-${tone}`);
     mark.setAttribute('aria-hidden', 'true');
     status.append(mark, document.createTextNode(LABEL[item.status] || 'Resting'));
@@ -128,7 +142,10 @@ export function mountUI(hooks) {
     const wrap = el('section', `glass sub ${extraClass || ''}${count ? ' has' : ''}`);
     const head = el('button', 'sub-head');
     head.type = 'button';
-    head.append(el('span', null, title), el('span', 'count-pill', String(count)));
+    const label = el('span', 'sub-title');
+    label.append(el('span', 'chev', open[key] ? '▾' : '▸'), document.createTextNode(` ${title}`));
+    const badge = el('span', 'count-pill', String(count));
+    head.append(label, badge);
     head.setAttribute('aria-expanded', open[key] ? 'true' : 'false');
     head.addEventListener('click', () => {
       open[key] = !open[key];
@@ -151,6 +168,7 @@ export function mountUI(hooks) {
       const name = el('span', 'floor-name', floor.label);
       name.dir = 'auto';
       const dots = el('span', 'dots');
+      dots.title = 'Each dot is that bot’s own color, not its status.';
       floor.bots.slice(0, 6).forEach((bot) => {
         const dot = el('span', 'mini');
         dot.style.background = resolveLook(bot, view.state.looks[bot]).color;
@@ -165,7 +183,8 @@ export function mountUI(hooks) {
 
   function renderTabs(floors) {
     tabs.replaceChildren();
-    floors.forEach((floor, index) => {
+    for (let index = floors.length - 1; index >= 0; index -= 1) {
+      const floor = floors[index];
       const button = el('button', `tab${index === view.floorIndex ? ' is-active' : ''}`);
       button.type = 'button';
       button.style.setProperty('--tab', themeColor(floor.theme));
@@ -174,7 +193,7 @@ export function mountUI(hooks) {
       button.append(el('span', 'tab-index', String(index + 1)), name);
       button.addEventListener('click', () => hooks.onFloor(index));
       tabs.appendChild(button);
-    });
+    }
   }
 
   function renderSummary(counts) {
@@ -182,7 +201,7 @@ export function mountUI(hooks) {
     const items = [
       ['working', counts.working, 'working'],
       ['waiting', counts.waiting, 'waiting'],
-      ['errors', counts.error, 'errors'],
+      [counts.error === 1 ? 'error' : 'errors', counts.error, 'errors'],
       ['resting', counts.resting, 'resting'],
     ];
     items.forEach(([label, value, kind]) => {
@@ -195,7 +214,7 @@ export function mountUI(hooks) {
     });
     const live = document.getElementById('live');
     if (live) {
-      const sentence = `${counts.working} working, ${counts.waiting} waiting, ${counts.error} errors, ${counts.resting} resting`;
+      const sentence = `${counts.working} working, ${counts.waiting} waiting, ${counts.error} ${counts.error === 1 ? 'error' : 'errors'}, ${counts.resting} resting`;
       if (live.dataset.sentence !== sentence) {
         live.dataset.sentence = sentence;
         live.textContent = sentence;
@@ -207,7 +226,8 @@ export function mountUI(hooks) {
     left.replaceChildren();
     const block = el('section', 'glass floors-card');
     const title = el('h2', 'card-label', 'Floors');
-    block.append(title, renderFloors(floors));
+    const legend = el('p', 'legend', 'Dots show each bot’s color, not status.');
+    block.append(title, legend, renderFloors(floors));
     left.appendChild(block);
 
     const waiting = people.filter((item) => item.status === 'waiting_user');
@@ -321,10 +341,11 @@ export function mountUI(hooks) {
     const team = el('p', 'muted', floor ? floor.label : 'Lobby');
     team.dir = 'auto';
     id.append(name, team);
-    const close = el('button', 'icon-btn', 'Close');
+    const close = el('button', 'icon-btn', '×');
     close.type = 'button';
+    close.setAttribute('aria-label', 'Close details');
     close.addEventListener('click', () => hooks.onClose());
-    top.append(avatar(item.name, look), id, close);
+    top.append(thumbnail(look), id, close);
     const chip = el('p', `status-chip chip-${item.status === 'waiting_user' ? 'waiting' : item.status}`);
     const age = formatAge(item.age);
     chip.textContent = age ? `${LABEL[item.status] || 'Resting'} · ${age}` : (LABEL[item.status] || 'Resting');
@@ -349,6 +370,7 @@ export function mountUI(hooks) {
     card.appendChild(tiles);
     const recent = (view.state.activity || []).filter((entry) => entry.bot === item.name).slice(-3).reverse();
     if (recent.length) {
+      card.appendChild(el('p', 'legend', 'Last steps'));
       const list = el('ul', 'recent');
       recent.forEach((entry) => {
         const row = el('li');
@@ -357,7 +379,7 @@ export function mountUI(hooks) {
       });
       card.appendChild(list);
     }
-    const center = el('button', 'primary', 'Center');
+    const center = el('button', 'primary', `Focus on ${item.name}`);
     center.type = 'button';
     center.addEventListener('click', () => hooks.onBot(item.name));
     card.appendChild(center);
@@ -399,6 +421,37 @@ export function mountUI(hooks) {
     ].join('|');
   }
 
+  function paintBanner() {
+    const text = BANNERS[bannerKind] || '';
+    banner.replaceChildren();
+    if (!text || hintDismissed) {
+      banner.hidden = true;
+      return;
+    }
+    banner.hidden = false;
+    banner.classList.toggle('is-collapsed', hintCollapsed);
+    const body = el('span', 'hint-text', hintCollapsed ? 'Sample office' : text);
+    const actions = el('span', 'hint-actions');
+    if (hintCollapsed) {
+      const more = el('button', 'hint-more', 'Show');
+      more.type = 'button';
+      more.addEventListener('click', () => {
+        hintCollapsed = false;
+        paintBanner();
+      });
+      actions.appendChild(more);
+    }
+    const close = el('button', 'hint-x', '×');
+    close.type = 'button';
+    close.setAttribute('aria-label', 'Dismiss hint');
+    close.addEventListener('click', () => {
+      hintDismissed = true;
+      banner.hidden = true;
+    });
+    actions.appendChild(close);
+    banner.append(body, actions);
+  }
+
   window.setInterval(() => {
     if (view.state && key(Date.now()) !== rendered) render();
   }, 1000);
@@ -417,14 +470,13 @@ export function mountUI(hooks) {
       if (live) live.textContent = label;
     },
     setBanner(kind) {
-      const text = BANNERS[kind] || '';
-      banner.textContent = text;
-      banner.hidden = !text;
+      bannerKind = kind;
+      paintBanner();
     },
     setSound(on) {
-      soundBtn.textContent = on ? 'Sound on' : 'Sound';
+      soundBtn.classList.toggle('is-on', !!on);
       soundBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
-      soundBtn.setAttribute('aria-label', on ? 'Sound on' : 'Sound off');
+      soundBtn.setAttribute('aria-label', on ? 'Turn sound off' : 'Turn sound on');
     },
   };
 }

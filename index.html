@@ -25,7 +25,13 @@
         <p id="conn" class="conn demo" role="status">Demo</p>
       </div>
       <time id="clock" datetime="">--:--</time>
-      <button id="sound-btn" type="button" aria-pressed="false" aria-label="Sound off">Sound</button>
+      <button id="sound-btn" type="button" aria-pressed="false" aria-label="Turn sound on">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path fill="currentColor" d="M4 9h3.2L12 5.2v13.6L7.2 15H4V9z"/>
+          <path class="sound-wave" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M15.2 9.2a4 4 0 0 1 0 5.6M17.6 7a7 7 0 0 1 0 10"/>
+          <path class="sound-off" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M16 10l5 5M21 10l-5 5"/>
+        </svg>
+      </button>
     </div>
     <div id="summary" class="pill summary" aria-label="Status summary"></div>
   </header>

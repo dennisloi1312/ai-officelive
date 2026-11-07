@@ -80,6 +80,8 @@ function makeMaterials() {
   });
   glass.userData.shared = true;
   glass.side = THREE.DoubleSide;
+  const hairline = new THREE.LineBasicMaterial({ color: '#000000', transparent: true, opacity: 0.12 });
+  hairline.userData.shared = true;
   const   band = new THREE.MeshStandardMaterial({
     color: '#2B2B2E',
     roughness: 0.35,
@@ -87,8 +89,8 @@ function makeMaterials() {
   });
   band.userData.shared = true;
   return {
-    shell: std('#f7f8fa', 0.78),
-    floor: std('#fbfbfc', 0.84),
+    shell: std('#FAFAF8', 0.78),
+    floor: std('#EDEDEA', 0.84),
     band,
     white: std('#FAFAF8', 0.7),
     desk: std('#EFE7D6', 0.62),
@@ -97,6 +99,7 @@ function makeMaterials() {
     mullion: std('#FAFAF8', 0.4),
     laptop: std('#2B2B2E', 0.42),
     glass,
+    hairline,
     leaf: std('#6FAE4F', 0.55),
     leafDark: std('#4F8F3A', 0.5),
     ground: std('#E6E6E3', 0.96),
@@ -121,18 +124,18 @@ function addCurtain(parent, mats, width, height, x, z, rotY) {
   const wall = new THREE.Group();
   const pane = new THREE.Mesh(new THREE.PlaneGeometry(width, height), mats.glass);
   pane.position.y = height / 2;
-  wall.add(pane);
-  const posts = Math.max(3, Math.round(width / 1.3));
-  for (let i = 0; i <= posts; i += 1) {
-    const post = box(0.055, height, 0.055, mats.mullion);
-    post.position.set(-width / 2 + (i * width) / posts, height / 2, 0.03);
-    wall.add(post);
+  const points = [];
+  const cols = Math.max(2, Math.round(width / 2.4));
+  for (let i = 0; i <= cols; i += 1) {
+    const px = -width / 2 + (i * width) / cols;
+    points.push(px, 0, 0, px, height, 0);
   }
-  for (const y of [height * 0.08, height * 0.62, height * 0.96]) {
-    const rail = box(width, 0.05, 0.05, mats.mullion);
-    rail.position.set(0, y, 0.03);
-    wall.add(rail);
-  }
+  points.push(-width / 2, height * 0.55, 0, width / 2, height * 0.55, 0);
+  const lines = new THREE.LineSegments(
+    new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(points, 3)),
+    mats.hairline,
+  );
+  wall.add(pane, lines);
   wall.position.set(x, 0, z);
   wall.rotation.y = rotY;
   parent.add(wall);
@@ -150,8 +153,8 @@ function addDeskRow(parent, mats, z) {
   const seats = [];
   for (let i = 0; i < 4; i += 1) {
     const x = -3.5 + i * 2.15;
-    const stool = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.46, 22), mats.white));
-    stool.position.set(x, 0.23, z - 0.92);
+    const stool = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.42, 22), mats.white));
+    stool.position.set(x, 0.21, z - 1.35);
     parent.add(stool);
     const base = box(0.46, 0.025, 0.3, mats.laptop, false);
     base.position.set(x, 0.79, z + 0.05);
@@ -165,7 +168,7 @@ function addDeskRow(parent, mats, z) {
     screen.position.set(x, 0.96, z - 0.32);
     screen.castShadow = false;
     parent.add(base, screen);
-    seats.push({ x, z: z - 0.92, screenMat });
+    seats.push({ x, z: z - 1.35, screenMat });
   }
   return seats;
 }
@@ -361,8 +364,8 @@ export function createOffice(stage, hooks) {
   const elevBars = [];
 
   const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(0.42, 0.025, 8, 28),
-    new THREE.MeshBasicMaterial({ color: '#fbbf24', toneMapped: false }),
+    new THREE.TorusGeometry(0.48, 0.03, 8, 28),
+    new THREE.MeshBasicMaterial({ color: '#A1A1AA', toneMapped: false }),
   );
   ring.rotation.x = Math.PI / 2;
   ring.visible = false;
@@ -387,6 +390,7 @@ export function createOffice(stage, hooks) {
   const raycaster = new THREE.Raycaster();
   const desiredTarget = new THREE.Vector3();
   let snapped = false;
+  let userZoomed = false;
 
   function buildInterior(parent, floor) {
     addCurtain(parent, mats, W - 0.8, 2.7, 0, -D / 2 + 0.28, 0);
@@ -532,7 +536,28 @@ export function createOffice(stage, hooks) {
       build(floors);
       layoutInstant();
       snapped = false;
+      if (!userZoomed) frameFloor();
     }
+  }
+
+  function frameFloor() {
+    const rect = stage.getBoundingClientRect();
+    const narrow = window.innerWidth <= 640;
+    const left = narrow ? 12 : 312;
+    const right = narrow ? 12 : 332;
+    const top = narrow ? 148 : 16;
+    const bottom = narrow ? 72 : 16;
+    const availW = Math.max(140, rect.width - left - right);
+    const availH = Math.max(140, rect.height - top - bottom);
+    const aspect = Math.max(rect.width, 1) / Math.max(rect.height, 1);
+    const viewH = 12.8;
+    const viewW = viewH * aspect;
+    const span = (W + D) * 0.78;
+    const tall = OPEN + (W + D) * 0.2;
+    const zoomW = (availW / rect.width) * viewW / span;
+    const zoomH = (availH / rect.height) * viewH / tall;
+    const fitted = THREE.MathUtils.clamp(Math.min(zoomW, zoomH), controls.minZoom, controls.maxZoom);
+    zoomAnim = { from: camera.zoom, to: fitted, start: performance.now(), dur: reduce ? 0 : 720 };
   }
 
   function setFloor(index) {
@@ -547,6 +572,8 @@ export function createOffice(stage, hooks) {
       from,
       to: poseTargets(active),
     };
+    userZoomed = false;
+    frameFloor();
   }
 
   function focusBot(name) {
@@ -559,6 +586,7 @@ export function createOffice(stage, hooks) {
 
   function zoom(direction) {
     const next = THREE.MathUtils.clamp(camera.zoom * (direction > 0 ? 1.18 : 1 / 1.18), controls.minZoom, controls.maxZoom);
+    userZoomed = true;
     zoomAnim = { from: camera.zoom, to: next, start: performance.now(), dur: 280 };
   }
 
@@ -581,6 +609,10 @@ export function createOffice(stage, hooks) {
   }
 
   const down = { active: false, id: 0, x: 0, y: 0 };
+  renderer.domElement.addEventListener('wheel', () => {
+    userZoomed = true;
+    zoomAnim = null;
+  }, { passive: true });
   renderer.domElement.addEventListener('pointerdown', (event) => {
     down.active = true;
     down.id = event.pointerId;
@@ -620,6 +652,7 @@ export function createOffice(stage, hooks) {
     camera.updateProjectionMatrix();
     renderer.setSize(width, height, false);
     labelRenderer.setSize(width, height);
+    if (levels.length && !userZoomed) frameFloor();
   }
   const observer = new ResizeObserver(() => resize());
   observer.observe(stage);
@@ -707,6 +740,15 @@ export function createOffice(stage, hooks) {
     }
     if (chosen) {
       const level = levels.find((item) => item.key === chosen.floorKey);
+      const presentation = presentBot(state?.bots[chosen.name], now, chosen.name);
+      const ringColor = {
+        working: '#34C759',
+        waiting_user: '#F5A524',
+        error: '#FF5A5F',
+        done: '#5AA9FF',
+        idle: '#A1A1AA',
+      }[presentation.status] || '#A1A1AA';
+      ring.material.color.set(ringColor);
       chosen.visual.root.getWorldPosition(ring.position);
       if (level) ring.position.y = level.y + BASE + 0.06;
       ring.visible = true;

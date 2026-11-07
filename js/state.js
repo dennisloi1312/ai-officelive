@@ -144,11 +144,11 @@ export function floorTheme(label) {
 }
 
 export function themeColor(theme) {
-  if (theme === 'lounge') return '#34C759';
-  if (theme === 'library') return '#5B8DEF';
-  if (theme === 'meeting') return '#7C6BD6';
-  if (theme === 'media') return '#F06BA8';
-  return '#8B93A7';
+  if (theme === 'lounge') return '#1F7A3A';
+  if (theme === 'library') return '#2F5FD0';
+  if (theme === 'meeting') return '#5B3FC4';
+  if (theme === 'media') return '#C2185B';
+  return '#3F3F46';
 }
 
 export function sanitizeRoster(list) {
