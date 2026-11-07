@@ -29,6 +29,7 @@ export function saveCache(topic, state) {
       bots: { ...state.bots },
       routines: { ...state.routines },
       usage: state.usage,
+      activity: state.activity,
       lastEventId: state.lastEventId,
     };
     localStorage.setItem(cacheKey(topic), JSON.stringify(plain));

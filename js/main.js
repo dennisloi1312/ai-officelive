@@ -1,28 +1,38 @@
 import { watchDemo, watchTopic } from './feed.js';
 import { createOffice } from './office.js';
 import { createSound } from './sound.js';
-import { createEmptyState, topicFromHash } from './state.js';
+import { createEmptyState, floorPlan, topicFromHash } from './state.js';
 import { mountUI } from './ui.js';
 
 const stage = document.getElementById('stage');
 const sound = createSound();
+let state = createEmptyState();
+let floorIndex = 0;
 let selected = null;
+let mode = 'demo';
 let stopFeed = () => {};
 let primed = false;
 const previous = new Map();
 
 const office = createOffice(stage, {
   onPick(name) {
-    choose(name);
+    if (name) selectBot(name);
+    else closeBot();
   },
 });
 
 const ui = mountUI({
-  onSelect(name) {
-    choose(name);
+  onFloor(index) {
+    selectFloor(index);
   },
-  onReset() {
-    office.resetCamera();
+  onBot(name) {
+    selectBot(name);
+  },
+  onClose() {
+    closeBot();
+  },
+  onZoom(direction) {
+    office.zoom(direction);
   },
   onSound() {
     const on = sound.toggle();
@@ -31,11 +41,45 @@ const ui = mountUI({
   },
 });
 
-function choose(name) {
-  selected = name || null;
-  if (selected) office.focus(selected);
-  else office.clearSelection();
-  ui.setSelected(selected);
+function paint() {
+  const floors = floorPlan(state);
+  if (!floors.length) floorIndex = 0;
+  else if (floorIndex >= floors.length) floorIndex = 0;
+  office.setState(state);
+  office.setFloor(floorIndex);
+  if (selected) office.focusBot(selected);
+  else office.clearBot();
+  ui.sync({ state, floorIndex, selected });
+}
+
+function selectFloor(index) {
+  const floors = floorPlan(state);
+  floorIndex = Math.max(0, Math.min(floors.length - 1, index));
+  const floor = floors[floorIndex];
+  if (selected && floor && !floor.bots.includes(selected)) {
+    selected = null;
+    office.clearBot();
+  }
+  office.setFloor(floorIndex);
+  ui.sync({ state, floorIndex, selected });
+}
+
+function selectBot(name) {
+  selected = name;
+  const floors = floorPlan(state);
+  const index = floors.findIndex((floor) => floor.bots.includes(name));
+  if (index >= 0) {
+    floorIndex = index;
+    office.setFloor(index);
+  }
+  office.focusBot(name);
+  ui.sync({ state, floorIndex, selected });
+}
+
+function closeBot() {
+  selected = null;
+  office.clearBot();
+  ui.sync({ state, floorIndex, selected });
 }
 
 function onState(next, meta) {
@@ -49,12 +93,9 @@ function onState(next, meta) {
   previous.clear();
   for (const name of next.roster) previous.set(name, next.bots[name]?.status || '');
   primed = true;
-  if (selected && !next.roster.includes(selected)) {
-    selected = null;
-    office.clearSelection();
-  }
-  office.setState(next);
-  ui.sync(next, selected);
+  state = next;
+  if (selected && !state.roster.includes(selected)) selected = null;
+  paint();
 }
 
 function boot() {
@@ -62,28 +103,40 @@ function boot() {
   primed = false;
   previous.clear();
   selected = null;
-  office.clearSelection();
-  ui.setSelected(null);
+  floorIndex = 0;
   const parsed = topicFromHash(location.hash);
   if (!parsed.topic) {
+    mode = 'demo';
     ui.setBanner(parsed.invalid ? 'invalid' : 'demo');
-    stopFeed = watchDemo({ onStatus: ui.setMode, onState });
+    stopFeed = watchDemo({
+      onStatus(next) {
+        mode = next;
+        ui.setMode(next);
+      },
+      onState,
+    });
     return;
   }
   ui.setBanner('live');
   ui.setMode('connecting');
-  office.setState(createEmptyState());
-  stopFeed = watchTopic(parsed.topic, { onStatus: ui.setMode, onState });
+  state = createEmptyState();
+  paint();
+  stopFeed = watchTopic(parsed.topic, {
+    onStatus(next) {
+      mode = next;
+      ui.setMode(next);
+    },
+    onState,
+  });
 }
 
 window.addEventListener('hashchange', boot);
 window.addEventListener('keydown', (event) => {
   const tag = document.activeElement && document.activeElement.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-  if (event.key === 'Escape') choose(null);
-  if ((event.key === 'r' || event.key === 'R') && !event.metaKey && !event.ctrlKey && !event.altKey) {
-    office.resetCamera();
-  }
+  if (event.key === 'Escape') closeBot();
+  if (event.key === '+' || event.key === '=') office.zoom(1);
+  if (event.key === '-' || event.key === '_') office.zoom(-1);
 });
 
 const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -92,3 +145,4 @@ applyMotion();
 if (motion.addEventListener) motion.addEventListener('change', applyMotion);
 
 boot();
+void mode;

@@ -128,8 +128,27 @@ export function createEmptyState() {
     bots: Object.create(null),
     routines: Object.create(null),
     usage: null,
+    activity: [],
     lastEventId: null,
   };
+}
+
+/** Known teams get a distinct room. Anything else is a plain open plan. */
+export function floorTheme(label) {
+  const key = String(label || '').trim().toLowerCase();
+  if (key === 'ops') return 'lounge';
+  if (key === 'research') return 'library';
+  if (key === 'web dev' || key === 'webdev') return 'meeting';
+  if (key === 'design') return 'media';
+  return 'open';
+}
+
+export function themeColor(theme) {
+  if (theme === 'lounge') return '#34C759';
+  if (theme === 'library') return '#5B8DEF';
+  if (theme === 'meeting') return '#7C6BD6';
+  if (theme === 'media') return '#F06BA8';
+  return '#8B93A7';
 }
 
 export function sanitizeRoster(list) {
@@ -192,7 +211,16 @@ function isOps(label) {
   return label.trim().toLowerCase() === 'ops';
 }
 
+const TEAM_RANK = ['ops', 'research', 'web dev', 'design'];
+
+function teamRank(label) {
+  const index = TEAM_RANK.indexOf(label.trim().toLowerCase());
+  return index === -1 ? 100 : index;
+}
+
 function cmpLabel(a, b) {
+  const rank = teamRank(a) - teamRank(b);
+  if (rank) return rank;
   if (a < b) return -1;
   if (a > b) return 1;
   return 0;
@@ -208,7 +236,7 @@ export function floorPlan(state) {
     const key = ops ? '__ops__' : label;
     let bucket = buckets.get(key);
     if (!bucket) {
-      bucket = { key, label, bots: [], overflowTeams: 0 };
+      bucket = { key, label, bots: [], overflowTeams: 0, theme: floorTheme(label) };
       buckets.set(key, bucket);
       order.push(bucket);
     }
@@ -225,7 +253,7 @@ export function floorPlan(state) {
   const rest = order.filter((bucket) => bucket.key !== '__ops__').sort((a, b) => cmpLabel(a.label, b.label));
   let floors = [...ops, ...rest];
   if (floors.length === 0) {
-    floors = [{ key: '__lobby__', label: 'Lobby', bots: [], overflowTeams: 0 }];
+    floors = [{ key: '__lobby__', label: 'Lobby', bots: [], overflowTeams: 0, theme: 'open' }];
   }
   if (floors.length > 6) {
     const head = floors.slice(0, 5);
@@ -235,6 +263,7 @@ export function floorPlan(state) {
       label: extra.length === 1 ? extra[0].label : extra[0].label,
       bots: extra.flatMap((floor) => floor.bots),
       overflowTeams: extra.length > 1 ? extra.length - 1 : 0,
+      theme: 'open',
     });
     floors = head;
   }
@@ -330,6 +359,8 @@ export function applyPayload(state, payload, at) {
     let step = prev.step || '';
     if ('step' in payload) step = typeof payload.step === 'string' ? clip(payload.step, 500) : step;
     state.bots[statusName] = { status, step, updatedAt: at };
+    state.activity.push({ at, bot: statusName, step, status });
+    if (state.activity.length > 24) state.activity.splice(0, state.activity.length - 24);
     changed = true;
   }
 
@@ -404,6 +435,21 @@ export function stateFromPlain(data) {
   if (data.usage && typeof data.usage === 'object') {
     state.usage = sanitizeUsage({ type: 'usage', ...data.usage });
   }
+  if (Array.isArray(data.activity)) {
+    for (const item of data.activity) {
+      if (!item || typeof item !== 'object') continue;
+      const bot = sanitizeName(item.bot);
+      if (!bot || !STATUSES.has(item.status)) continue;
+      const at = Number(item.at);
+      state.activity.push({
+        at: Number.isFinite(at) ? at : 0,
+        bot,
+        step: typeof item.step === 'string' ? clip(item.step, 500) : '',
+        status: item.status,
+      });
+    }
+    if (state.activity.length > 24) state.activity.splice(0, state.activity.length - 24);
+  }
   if (typeof data.lastEventId === 'string' && data.lastEventId.length > 0 && data.lastEventId.length <= 80) {
     state.lastEventId = data.lastEventId;
   }
@@ -418,42 +464,64 @@ function hoursFromNow(ms) {
 export function createDemoState() {
   const now = Date.now();
   const state = createEmptyState();
+  const roster = [
+    'Kai', 'Momo', 'Jun', 'Sol', 'Ren', '小墨',
+    '研究｜文獻研究員', 'Nori', 'Lin', 'Page',
+    'Quill', 'Byte', 'Commit', 'Branch',
+    'Pixel', 'Dot', 'Hue', 'Frame',
+  ];
   applyPayload(state, {
-    roster: ['Kai', 'Momo', 'Pixel', 'Dot', 'Quill', '小墨', '研究｜文獻研究員', 'Nori'],
+    roster,
     groups: {
-      Kai: 'Ops',
-      Momo: 'Ops',
-      Pixel: 'Design',
-      Dot: 'Design',
-      Quill: 'Writing',
-      小墨: 'Writing',
-      '研究｜文獻研究員': '研究',
-      Nori: '研究',
+      Kai: 'Ops', Momo: 'Ops', Jun: 'Ops', Sol: 'Ops', Ren: 'Ops', 小墨: 'Ops',
+      '研究｜文獻研究員': 'Research', Nori: 'Research', Lin: 'Research', Page: 'Research',
+      Quill: 'Web Dev', Byte: 'Web Dev', Commit: 'Web Dev', Branch: 'Web Dev',
+      Pixel: 'Design', Dot: 'Design', Hue: 'Design', Frame: 'Design',
     },
     looks: {
-      Kai: { shape: 'sphere', color: '#1E86FC', accessory: 'antenna' },
-      Momo: { shape: 'pill', color: '#F2A3C7', accessory: 'bow' },
-      Pixel: { shape: 'clover', color: '#6FBE6A', accessory: 'glasses' },
-      Dot: { shape: 'rounded_square', color: '#E07A6A', accessory: 'antenna' },
-      Quill: { shape: 'triangle', color: '#E08A3C', accessory: 'none' },
-      小墨: { shape: 'star6', color: '#E2B143', accessory: 'bow' },
-      '研究｜文獻研究員': { shape: 'rounded_cube', color: '#2F9E8F', accessory: 'glasses' },
-      Nori: { shape: 'hexagon', color: '#7C6BD6', accessory: 'stem' },
+      Kai: { shape: 'sphere', color: '#3B82F6', accessory: 'antenna' },
+      Momo: { shape: 'pill', color: '#F472B6', accessory: 'bow' },
+      Jun: { shape: 'rounded_cube', color: '#22C55E', accessory: 'none' },
+      Sol: { shape: 'sphere', color: '#F59E0B', accessory: 'stem' },
+      Ren: { shape: 'pill', color: '#A78BFA', accessory: 'glasses' },
+      小墨: { shape: 'star6', color: '#FBBF24', accessory: 'bow' },
+      '研究｜文獻研究員': { shape: 'rounded_cube', color: '#14B8A6', accessory: 'glasses' },
+      Nori: { shape: 'hexagon', color: '#8B5CF6', accessory: 'stem' },
+      Lin: { shape: 'sphere', color: '#2563EB', accessory: 'none' },
+      Page: { shape: 'pill', color: '#94A3B8', accessory: 'glasses' },
+      Quill: { shape: 'triangle', color: '#F97316', accessory: 'none' },
+      Byte: { shape: 'rounded_cube', color: '#0EA5E9', accessory: 'antenna' },
+      Commit: { shape: 'sphere', color: '#6366F1', accessory: 'none' },
+      Branch: { shape: 'pill', color: '#10B981', accessory: 'stem' },
+      Pixel: { shape: 'clover', color: '#4ADE80', accessory: 'glasses' },
+      Dot: { shape: 'rounded_square', color: '#FB7185', accessory: 'antenna' },
+      Hue: { shape: 'pill', color: '#E879F9', accessory: 'bow' },
+      Frame: { shape: 'cone', color: '#F43F5E', accessory: 'none' },
     },
   }, now);
   const scripts = [
     ['Kai', 'working', 'Sorting the morning queue'],
     ['Momo', 'idle', 'People-watching the lobby'],
-    ['Pixel', 'working', 'Nudging the layout grid'],
-    ['Dot', 'idle', 'Stretching between tasks'],
-    ['Quill', 'error', 'Draft file missing'],
+    ['Jun', 'working', 'Clearing the handoff list'],
+    ['Sol', 'working', 'Checking the lobby board'],
+    ['Ren', 'idle', 'Resting between passes'],
     ['小墨', 'done', 'Sent the recap'],
     ['研究｜文獻研究員', 'working', '正在整理本週文獻'],
     ['Nori', 'waiting_user', 'Need a source checked'],
+    ['Lin', 'working', 'Cross-reading two papers'],
+    ['Page', 'idle', 'Shelving a citation'],
+    ['Quill', 'error', 'Draft file missing'],
+    ['Byte', 'working', 'Wiring the review build'],
+    ['Commit', 'working', 'Splitting a long diff'],
+    ['Branch', 'idle', 'Waiting on CI'],
+    ['Pixel', 'working', 'Nudging the layout grid'],
+    ['Dot', 'idle', 'Stretching between tasks'],
+    ['Hue', 'working', 'Trying a warmer palette'],
+    ['Frame', 'done', 'Exported the frames'],
   ];
-  for (const [bot, status, step] of scripts) {
-    applyPayload(state, { bot, status, step }, now);
-  }
+  scripts.forEach(([bot, status, step], index) => {
+    applyPayload(state, { bot, status, step }, now - (scripts.length - index) * 60000);
+  });
   applyPayload(state, {
     routines: {
       bot: 'Kai',
@@ -471,14 +539,10 @@ export function createDemoState() {
     total_used_pct: 37,
     resets_at: hoursFromNow(6 * 60 * 60 * 1000),
     bots: {
-      Kai: 8.2,
-      Momo: 3.4,
-      Pixel: 5.4,
-      Dot: 1.2,
-      Quill: 2.2,
-      小墨: 1.1,
-      '研究｜文獻研究員': 11.5,
-      Nori: 4,
+      Kai: 8.2, Momo: 3.4, Jun: 4.1, Sol: 2.2, Ren: 1.4, 小墨: 1.1,
+      '研究｜文獻研究員': 11.5, Nori: 4, Lin: 3.2, Page: 0.8,
+      Quill: 2.2, Byte: 5.1, Commit: 3.6, Branch: 1.5,
+      Pixel: 5.4, Dot: 1.2, Hue: 2.8, Frame: 1.7,
     },
   }, now);
   return state;
