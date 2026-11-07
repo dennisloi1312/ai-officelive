@@ -468,7 +468,7 @@ export function createDemoState() {
     'Kai', 'Momo', 'Jun', 'Sol', 'Ren', '小墨',
     '研究｜文獻研究員', 'Nori', 'Lin', 'Page',
     'Quill', 'Byte', 'Commit', 'Branch',
-    'Pixel', 'Dot', 'Hue', 'Frame',
+      'Dot', 'Hue', 'Pixel', 'Frame',
   ];
   applyPayload(state, {
     roster,
@@ -493,9 +493,9 @@ export function createDemoState() {
       Byte: { shape: 'rounded_cube', color: '#0EA5E9', accessory: 'antenna' },
       Commit: { shape: 'sphere', color: '#6366F1', accessory: 'none' },
       Branch: { shape: 'pill', color: '#10B981', accessory: 'stem' },
-      Pixel: { shape: 'clover', color: '#4ADE80', accessory: 'glasses' },
+      Pixel: { shape: 'clover', color: '#F472B6', accessory: 'bow' },
       Dot: { shape: 'rounded_square', color: '#FB7185', accessory: 'antenna' },
-      Hue: { shape: 'pill', color: '#E879F9', accessory: 'bow' },
+      Hue: { shape: 'rounded_cube', color: '#E879F9', accessory: 'none' },
       Frame: { shape: 'cone', color: '#F43F5E', accessory: 'none' },
     },
   }, now);
@@ -514,7 +514,7 @@ export function createDemoState() {
     ['Byte', 'working', 'Wiring the review build'],
     ['Commit', 'working', 'Splitting a long diff'],
     ['Branch', 'idle', 'Waiting on CI'],
-    ['Pixel', 'working', 'Nudging the layout grid'],
+    ['Pixel', 'idle', 'Resting by the board'],
     ['Dot', 'idle', 'Stretching between tasks'],
     ['Hue', 'working', 'Trying a warmer palette'],
     ['Frame', 'done', 'Exported the frames'],

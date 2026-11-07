@@ -211,9 +211,17 @@ function addTheme(parent, mats, theme) {
     const table = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.08, 24), mats.white));
     table.position.set(4.35, 0.36, 2.55);
     const cup = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.1, 12), mats.leg), false);
-    cup.position.set(4.45, 0.45, 2.45);
-    parent.add(table, cup);
-    return { x: 3.7, z: 3.05 };
+    cup.position.set(4.22, 0.45, 2.48);
+    const cupB = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.09, 12), mats.white), false);
+    cupB.position.set(4.5, 0.44, 2.66);
+    const counter = box(0.62, 0.72, 0.38, mats.white);
+    counter.position.set(5.35, 0.36, 3.55);
+    const machine = box(0.28, 0.34, 0.22, mats.shell);
+    machine.position.set(5.35, 0.89, 3.52);
+    const spout = box(0.08, 0.06, 0.1, mats.laptop, false);
+    spout.position.set(5.35, 0.78, 3.38);
+    parent.add(table, cup, cupB, counter, machine, spout);
+    return { x: 4.15, z: 1.85 };
   }
   if (theme === 'library') {
     addShelf(parent, mats, -5.15, -2.4, 0.15);
@@ -424,7 +432,7 @@ export function createOffice(stage, hooks) {
         seat: { x: seatPos.x, z: seatPos.z },
         screenMat: seatPos.screenMat,
         lounge: { x: lounge.x - sleepIndex * 0.45, z: lounge.z },
-        path: { minX: -5.1, maxX: 5.1, minZ: 2.55, maxZ: 4.15 },
+        homeKey: floor.key,
         floorKey: floor.key,
       });
     });
@@ -658,6 +666,83 @@ export function createOffice(stage, hooks) {
   observer.observe(stage);
   resize();
 
+  function mentions(step, name) {
+    const hay = String(step || '').toLowerCase();
+    const token = String(name || '').toLowerCase();
+    if (!token || hay.length < token.length) return false;
+    let from = 0;
+    while (from <= hay.length - token.length) {
+      const at = hay.indexOf(token, from);
+      if (at < 0) return false;
+      const before = at === 0 || !/[\p{L}\p{N}_]/u.test(hay[at - 1]);
+      const afterAt = at + token.length;
+      const after = afterAt >= hay.length || !/[\p{L}\p{N}_]/u.test(hay[afterAt]);
+      if (before && after) return true;
+      from = at + token.length;
+    }
+    return false;
+  }
+
+  function attachFloor(record, key) {
+    if (record.floorKey === key) return;
+    const level = levels.find((item) => item.key === key);
+    if (!level) return;
+    level.interior.add(record.visual.root);
+    record.floorKey = key;
+    const index = levels.indexOf(level);
+    if (index >= 0 && index !== active) setFloor(index);
+  }
+
+  function approach(fromX, fromZ, toX, toZ) {
+    const dx = fromX - toX;
+    const dz = fromZ - toZ;
+    const dist = Math.hypot(dx, dz) || 1;
+    const keep = Math.min(0.72, dist);
+    return {
+      x: toX + (dx / dist) * keep,
+      z: toZ + (dz / dist) * keep,
+      faceX: toX,
+      faceZ: toZ,
+    };
+  }
+
+  function chooseVisit(record, presentation) {
+    const status = presentation.status;
+    if (status === 'working' || status === 'waiting_user') {
+      const names = records
+        .map((item) => item.name)
+        .filter((name) => name !== record.name)
+        .sort((a, b) => b.length - a.length);
+      const hit = names.find((name) => mentions(presentation.step, name));
+      const partner = hit ? records.find((item) => item.name === hit) : null;
+      if (partner) {
+        attachFloor(record, partner.floorKey);
+        return approach(
+          record.visual.root.position.x,
+          record.visual.root.position.z,
+          partner.visual.root.position.x,
+          partner.visual.root.position.z,
+        );
+      }
+    }
+    if (record.floorKey !== record.homeKey) attachFloor(record, record.homeKey);
+    if (status === 'idle' && record.homeKey === '__ops__' && elapsed > 16) {
+      const mates = records.filter((item) => item.homeKey === '__ops__');
+      const index = mates.findIndex((item) => item.name === record.name);
+      const period = 22;
+      const t = (elapsed - 16) % (period * Math.max(mates.length, 1));
+      if (Math.floor(t / period) === index && (t % period) < 9) {
+        return {
+          x: 3.9 + (index % 2) * 0.55,
+          z: 1.82,
+          faceX: 4.35,
+          faceZ: 2.55,
+        };
+      }
+    }
+    return null;
+  }
+
   function loop() {
     const dt = Math.min(clock.getDelta(), 0.05);
     elapsed += dt;
@@ -710,7 +795,6 @@ export function createOffice(stage, hooks) {
       const level = levels.find((item) => item.key === record.floorKey);
       const shown = level && level.interior.visible;
       record.visual.root.visible = !!shown;
-      if (!shown) continue;
       const presentation = presentBot(state?.bots[record.name], now, record.name);
       const mode = visualMode(presentation);
       updateCharacter(record.visual, {
@@ -720,8 +804,7 @@ export function createOffice(stage, hooks) {
         reduce,
         celebrateT: mode === 'celebrate' ? Math.min(1, presentation.age / DONE_MS) : 0,
         seat: record.seat,
-        lounge: record.lounge,
-        path: record.path,
+        visit: chooseVisit(record, presentation),
         showStep: selected === record.name,
         showName: hovered === record.name || selected === record.name,
         step: presentation.step,

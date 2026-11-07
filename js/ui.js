@@ -88,7 +88,7 @@ export function mountUI(hooks) {
     drawerToggle.addEventListener('click', () => {
       const opened = drawer.classList.toggle('is-open');
       drawerToggle.setAttribute('aria-expanded', opened ? 'true' : 'false');
-      drawerToggle.textContent = opened ? 'Hide panels' : 'Panels';
+      drawerToggle.setAttribute('aria-label', opened ? 'Hide panels' : 'Panels');
     });
   }
   const backdrop = document.getElementById('backdrop');
@@ -204,12 +204,16 @@ export function mountUI(hooks) {
       [counts.error === 1 ? 'error' : 'errors', counts.error, 'errors'],
       ['resting', counts.resting, 'resting'],
     ];
+    const compact = window.matchMedia('(max-width: 640px)').matches;
+    summary.classList.toggle('is-compact', compact);
     items.forEach(([label, value, kind]) => {
       const chip = el('span', `sum sum-${kind}`);
       const mark = el('span', `status-dot dot-${kind === 'errors' ? 'error' : kind === 'resting' ? 'idle' : kind}`);
       mark.setAttribute('aria-hidden', 'true');
       const number = el('b', null, String(value));
-      chip.append(mark, number, document.createTextNode(` ${label}`));
+      chip.setAttribute('aria-label', `${value} ${label}`);
+      if (compact) chip.append(number, mark);
+      else chip.append(mark, number, document.createTextNode(` ${label}`));
       summary.appendChild(chip);
     });
     const live = document.getElementById('live');
