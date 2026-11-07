@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="A live 3D office where AI assistant bots work, one floor per team.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net 'sha256-vbcsySP8iuhfLUcQ1jWZ49xt/tkbnLXtbtzQCla+KbQ='; style-src 'self'; connect-src https://ntfy.sh; img-src 'self'; font-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>AI Office</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./css/styles.css">
+  <script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/"
+  }
+}
+  </script>
+</head>
+<body>
+  <div id="viewport"></div>
+  <p id="hint"><span class="for-desk">Drag to orbit · scroll to zoom</span><span class="for-touch">Drag to orbit · pinch to zoom</span></p>
+  <button id="panel-toggle" type="button" aria-expanded="true" aria-controls="panel">Hide roster</button>
+  <aside id="panel" aria-label="Roster">
+    <div class="grabber" aria-hidden="true"></div>
+  </aside>
+  <noscript><p class="noscript">JavaScript is required to draw the office and follow the ntfy topic.</p></noscript>
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
