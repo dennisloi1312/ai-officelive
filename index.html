@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; media-src 'none'; img-src 'self'; font-src 'none'; style-src 'self'; connect-src https://ntfy.sh; script-src 'self' https://cdn.jsdelivr.net 'sha256-/neONZNSzp6tDn0DeJDcFsXd9UFJ1+WL9YDmzBCOsTE='">
+  <title>AI Office</title>
+  <meta name="description" content="A live 3D office where your AI assistant bots work, one floor per team.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/office.css">
+</head>
+<body>
+  <p class="sr-only" id="app-desc">Animated 3D office. Drag to orbit, scroll or pinch to zoom, and tap a bot for its latest step. Times are shown in your local timezone.</p>
+  <div class="shell">
+    <div class="stage" id="stage">
+      <div class="vignette" aria-hidden="true"></div>
+      <header class="topbar">
+        <div class="brand">
+          <p class="brand-kicker">Live workshop</p>
+          <h1>AI Office</h1>
+        </div>
+        <div class="top-actions">
+          <p id="conn" class="conn chip demo" role="status">Demo</p>
+          <button type="button" id="sound-btn" class="chip" aria-pressed="false">Sound off</button>
+          <button type="button" id="reset-btn" class="chip">Reset view</button>
+        </div>
+      </header>
+      <p id="banner" class="banner"></p>
+      <p id="fatal" class="fatal" hidden>This browser could not start the 3D view.</p>
+    </div>
+    <aside class="panel" id="panel" aria-label="Bots">
+      <div class="panel-scroll" id="panel-scroll">
+        <section id="usage" class="card" hidden></section>
+        <section id="routines" class="card" hidden></section>
+        <div id="floors"></div>
+        <p class="tz">Times use this device’s clock.</p>
+      </div>
+      <div id="detail" class="detail" hidden></div>
+    </aside>
+  </div>
+  <noscript><p class="noscript">JavaScript is required to show the office.</p></noscript>
+  <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/"}}</script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
