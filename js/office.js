@@ -693,7 +693,7 @@ export function createOffice(stage, hooks) {
     if (index >= 0 && index !== active) setFloor(index);
   }
 
-  function approach(fromX, fromZ, toX, toZ) {
+  function approach(fromX, fromZ, toX, toZ, faceX, faceZ) {
     const dx = fromX - toX;
     const dz = fromZ - toZ;
     const dist = Math.hypot(dx, dz) || 1;
@@ -701,46 +701,96 @@ export function createOffice(stage, hooks) {
     return {
       x: toX + (dx / dist) * keep,
       z: toZ + (dz / dist) * keep,
-      faceX: toX,
-      faceZ: toZ,
+      faceX: faceX == null ? toX : faceX,
+      faceZ: faceZ == null ? toZ : faceZ,
     };
   }
 
-  function chooseVisit(record, presentation) {
-    const status = presentation.status;
-    if (status === 'working' || status === 'waiting_user') {
-      const names = records
-        .map((item) => item.name)
-        .filter((name) => name !== record.name)
-        .sort((a, b) => b.length - a.length);
-      const hit = names.find((name) => mentions(presentation.step, name));
-      const partner = hit ? records.find((item) => item.name === hit) : null;
-      if (partner) {
-        attachFloor(record, partner.floorKey);
-        return approach(
-          record.visual.root.position.x,
-          record.visual.root.position.z,
-          partner.visual.root.position.x,
-          partner.visual.root.position.z,
-        );
-      }
+  function namedPartner(record, presentation) {
+    if (presentation.status !== 'working' && presentation.status !== 'waiting_user') return null;
+    const names = records
+      .map((item) => item.name)
+      .filter((name) => name !== record.name)
+      .sort((a, b) => b.length - a.length);
+    const hit = names.find((name) => mentions(presentation.step, name));
+    return hit ? records.find((item) => item.name === hit) : null;
+  }
+
+  function spotNear(record, x, z, faceX, faceZ) {
+    return approach(record.visual.root.position.x, record.visual.root.position.z, x, z, faceX, faceZ);
+  }
+
+  function planMotion(record, presentation) {
+    const partner = namedPartner(record, presentation);
+    const errandKey = partner ? `${partner.name}|${presentation.step}` : '';
+    if (!record.trip && partner && record.finishedErrand !== errandKey) {
+      record.trip = { phase: 'stand', since: elapsed, kind: 'bot', partnerName: partner.name, key: errandKey };
     }
-    if (record.floorKey !== record.homeKey) attachFloor(record, record.homeKey);
-    if (status === 'idle' && record.homeKey === '__ops__' && elapsed > 16) {
+    if (!record.trip && !partner && presentation.status === 'idle' && record.homeKey === '__ops__' && elapsed > 24) {
       const mates = records.filter((item) => item.homeKey === '__ops__');
       const index = mates.findIndex((item) => item.name === record.name);
       const period = 22;
-      const t = (elapsed - 16) % (period * Math.max(mates.length, 1));
-      if (Math.floor(t / period) === index && (t % period) < 9) {
-        return {
-          x: 3.9 + (index % 2) * 0.55,
-          z: 1.82,
-          faceX: 4.35,
-          faceZ: 2.55,
-        };
+      const clockT = (elapsed - 24) % (period * Math.max(mates.length, 1));
+      if (Math.floor(clockT / period) === index && (clockT % period) < 2) {
+        record.trip = { phase: 'stand', since: elapsed, kind: 'coffee', key: `coffee-${Math.floor(elapsed)}` };
       }
     }
-    return null;
+    if (!record.trip) {
+      if (record.floorKey !== record.homeKey) attachFloor(record, record.homeKey);
+      return { visit: null, gait: 'sit', nod: 0 };
+    }
+    const trip = record.trip;
+    const age = elapsed - trip.since;
+    const next = (phase) => {
+      trip.phase = phase;
+      trip.since = elapsed;
+    };
+    if (trip.kind === 'bot') {
+      const who = records.find((item) => item.name === trip.partnerName);
+      if (trip.phase === 'stand') {
+        if (age >= 0.25 && who) {
+          attachFloor(record, who.floorKey);
+          trip.spot = approach(record.seat.x, record.seat.z, who.visual.root.position.x, who.visual.root.position.z, who.visual.root.position.x, who.visual.root.position.z);
+          next('out');
+        }
+        return { visit: null, gait: 'stand', nod: 0 };
+      }
+      if (trip.phase === 'out' && trip.spot) {
+        const visit = trip.spot;
+        if (Math.hypot(record.visual.root.position.x - visit.x, record.visual.root.position.z - visit.z) < 0.12) next('pause');
+        return { visit, gait: 'walk', nod: 0 };
+      }
+      if (trip.phase === 'pause') {
+        if (age >= 1.3) next('back');
+        return { visit: trip.spot || null, gait: 'stand', nod: Math.min(age / 0.7, 1) };
+      }
+      if (trip.phase === 'back') {
+        if (record.floorKey !== record.homeKey) attachFloor(record, record.homeKey);
+        if (Math.hypot(record.visual.root.position.x - record.seat.x, record.visual.root.position.z - record.seat.z) < 0.12) next('sit');
+        return { visit: null, gait: 'walk', nod: 0 };
+      }
+    } else if (trip.phase === 'stand') {
+      if (age >= 0.25) next('out');
+      return { visit: null, gait: 'stand', nod: 0 };
+    } else if (trip.phase === 'out') {
+      const visit = { x: 4.05, z: 1.82, faceX: 4.35, faceZ: 2.55 };
+      if (Math.hypot(record.visual.root.position.x - visit.x, record.visual.root.position.z - visit.z) < 0.16) {
+        trip.spot = visit;
+        next('pause');
+      }
+      return { visit, gait: 'walk', nod: 0 };
+    } else if (trip.phase === 'pause') {
+      if (age >= 1.25) next('back');
+      return { visit: trip.spot, gait: 'stand', nod: Math.min(age / 0.7, 1) };
+    } else if (trip.phase === 'back') {
+      if (Math.hypot(record.visual.root.position.x - record.seat.x, record.visual.root.position.z - record.seat.z) < 0.16) next('sit');
+      return { visit: null, gait: 'walk', nod: 0 };
+    }
+    if (age >= 0.28) {
+      record.finishedErrand = trip.key;
+      record.trip = null;
+    }
+    return { visit: null, gait: 'sit', nod: 0 };
   }
 
   function loop() {
@@ -797,6 +847,7 @@ export function createOffice(stage, hooks) {
       record.visual.root.visible = !!shown;
       const presentation = presentBot(state?.bots[record.name], now, record.name);
       const mode = visualMode(presentation);
+      const plan = planMotion(record, presentation);
       updateCharacter(record.visual, {
         dt,
         t: elapsed,
@@ -804,7 +855,9 @@ export function createOffice(stage, hooks) {
         reduce,
         celebrateT: mode === 'celebrate' ? Math.min(1, presentation.age / DONE_MS) : 0,
         seat: record.seat,
-        visit: chooseVisit(record, presentation),
+        visit: plan.visit,
+        gait: plan.gait,
+        nod: plan.nod,
         showStep: selected === record.name,
         showName: hovered === record.name || selected === record.name,
         step: presentation.step,
