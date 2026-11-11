@@ -231,6 +231,17 @@ function isOps(label) {
   return label.trim().toLowerCase() === 'ops';
 }
 
+function isDesign(label) {
+  return label.trim().toLowerCase() === 'design';
+}
+
+function displayTeam(label) {
+  const key = String(label || '').trim().toLowerCase();
+  if (key === 'ops') return 'Ops';
+  if (key === 'design') return 'Design';
+  return String(label || '').trim();
+}
+
 const TEAM_RANK = ['ops', 'research', 'web dev', 'design'];
 
 function teamRank(label) {
@@ -252,13 +263,23 @@ export function floorPlan(state) {
   const order = [];
 
   function bucketFor(label) {
-    const ops = isOps(label);
-    const key = ops ? '__ops__' : label;
+    const shared = isOps(label) || isDesign(label);
+    const key = shared ? '__ops__' : label;
     let bucket = buckets.get(key);
     if (!bucket) {
-      bucket = { key, label, bots: [], overflowTeams: 0, theme: floorTheme(label) };
+      bucket = { key, label: displayTeam(label), bots: [], teams: [], overflowTeams: 0, theme: shared ? 'lounge' : floorTheme(label) };
       buckets.set(key, bucket);
       order.push(bucket);
+    }
+    const shown = displayTeam(label);
+    if (shown && !bucket.teams.includes(shown)) {
+      bucket.teams.push(shown);
+      if (shared) {
+        const rank = { Ops: 0, Design: 1 };
+        bucket.teams.sort((a, b) => (rank[a] ?? 9) - (rank[b] ?? 9));
+        bucket.label = bucket.teams.join(' · ');
+        bucket.theme = 'lounge';
+      }
     }
     return bucket;
   }

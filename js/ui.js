@@ -169,7 +169,7 @@ export function mountUI(hooks) {
       name.dir = 'auto';
       const dots = el('span', 'dots');
       dots.title = 'Each dot is that bot’s own color, not its status.';
-      floor.bots.slice(0, 6).forEach((bot) => {
+      floor.bots.slice(0, 8).forEach((bot) => {
         const dot = el('span', 'mini');
         dot.style.background = lookFor(view.state, bot).color;
         dots.appendChild(dot);
@@ -418,7 +418,8 @@ export function mountUI(hooks) {
     const id = el('div');
     const name = el('h2', null, item.name);
     name.dir = 'auto';
-    const team = el('p', 'muted', floor ? floor.label : 'Lobby');
+    const groupName = view.state.groups[item.name];
+    const team = el('p', 'muted', groupName || (floor ? floor.label : 'Lobby'));
     team.dir = 'auto';
     id.append(name, team);
     const close = el('button', 'icon-btn', '×');

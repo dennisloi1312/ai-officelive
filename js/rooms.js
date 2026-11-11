@@ -275,28 +275,29 @@ export function addKaiOffice(parent, mats) {
 
   const depth = Z1 - Z0;
   const width = X1 - X0;
-  addGlassRun(group, materials, depth, X1, cz, Math.PI / 2, { center: 0, width: 0.86 });
+  addGlassRun(group, materials, depth, X1, cz, Math.PI / 2, null);
   addGlassRun(group, materials, depth, X0, cz, Math.PI / 2, null);
   addGlassRun(group, materials, width, cx, Z1, 0, null);
-  addGlassRun(group, materials, width, cx, Z0, 0, null);
+  addGlassRun(group, materials, width, cx, Z0, 0, { center: 1.2, width: 0.68 });
   for (const [x, z] of [[X0, Z0], [X1, Z0], [X0, Z1], [X1, Z1]]) {
     const post = box(0.07, WALL, 0.07, accent);
     post.position.set(x, WALL / 2, z);
     group.add(post);
   }
 
+  const doorX = cx + 1.2;
   const doorPivot = new THREE.Group();
-  const door = box(0.78, 1.18, 0.045, frost);
-  door.position.set(-0.39, 0.6, 0);
-  const handle = box(0.08, 0.04, 0.04, accent);
-  handle.position.set(-0.66, 0.62, 0.04);
+  const door = new THREE.Mesh(new THREE.BoxGeometry(0.62, 1.12, 0.025), clear);
+  door.position.set(0.31, 0.58, 0);
+  const handle = box(0.045, 0.03, 0.03, accent);
+  handle.position.set(0.5, 0.58, 0.03);
   doorPivot.add(door, handle);
-  doorPivot.position.set(X1, 0, cz - 0.43);
-  doorPivot.rotation.y = 0.55;
+  doorPivot.position.set(doorX - 0.34, 0, Z0);
+  doorPivot.rotation.y = -1.05;
   group.add(doorPivot);
 
   const sign = new CSS2DObject(el('div', 'door-sign', 'Kai · Ops'));
-  sign.position.set(X1 + 0.02, 1.48, cz);
+  sign.position.set(doorX, 1.42, Z0 + 0.04);
   sign.center.set(0.5, 1);
   group.add(sign);
 
