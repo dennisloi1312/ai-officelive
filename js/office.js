@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { createCharacter, updateCharacter } from './characters.js';
-import { DONE_MS, floorPlan, presentBot, resolveLook, visualMode } from './state.js';
+import { addKaiOffice, addMeetingTable, addWallArt } from './rooms.js';
+import { DONE_MS, floorPlan, lookFor, presentBot, visualMode } from './state.js';
 
 const W = 13.5;
 const D = 10.2;
@@ -145,18 +146,13 @@ function addCurtain(parent, mats, width, height, x, z, rotY) {
   parent.add(wall);
 }
 
-function addDeskRow(parent, mats, z) {
-  const top = box(8.8, 0.07, 1.05, mats.desk);
-  top.position.set(-0.2, 0.74, z);
-  parent.add(top);
-  for (const x of [-4.3, -0.2, 3.8]) {
-    const leg = box(0.07, 0.74, 0.07, mats.leg);
-    leg.position.set(x, 0.37, z);
-    parent.add(leg);
-  }
+function addDeskRow(parent, mats, z, opts = {}) {
+  const count = opts.count ?? 4;
+  const gap = opts.gap ?? 2.15;
+  const origin = opts.origin ?? -3.5;
   const seats = [];
-  for (let i = 0; i < 4; i += 1) {
-    const x = -3.5 + i * 2.15;
+  for (let i = 0; i < count; i += 1) {
+    const x = origin + i * gap;
     const stool = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.42, 22), mats.white));
     stool.position.set(x, 0.21, z - 1.35);
     parent.add(stool);
@@ -172,7 +168,26 @@ function addDeskRow(parent, mats, z) {
     screen.position.set(x, 0.96, z - 0.32);
     screen.castShadow = false;
     parent.add(base, screen);
+    if (i % 2 === 0) {
+      const mug = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.045, 0.08, 10), mats.white), false);
+      mug.position.set(x + 0.28, 0.82, z + 0.22);
+      parent.add(mug);
+    } else {
+      const pad = box(0.22, 0.02, 0.16, mats.leg, false);
+      pad.position.set(x - 0.22, 0.8, z + 0.18);
+      parent.add(pad);
+    }
     seats.push({ x, z: z - 1.35, screenMat });
+  }
+  const x0 = origin - 0.85;
+  const x1 = origin + (count - 1) * gap + 0.85;
+  const top = box(x1 - x0, 0.07, 1.05, mats.desk);
+  top.position.set((x0 + x1) / 2, 0.74, z);
+  parent.add(top);
+  for (const x of [x0 + 0.15, (x0 + x1) / 2, x1 - 0.15]) {
+    const leg = box(0.07, 0.74, 0.07, mats.leg);
+    leg.position.set(x, 0.37, z);
+    parent.add(leg);
   }
   return seats;
 }
@@ -322,6 +337,8 @@ export function createOffice(stage, hooks) {
     controls.enabled = !phone;
     controls.enableRotate = !phone;
     controls.enablePan = false;
+    controls.minZoom = phone ? 0.45 : 0.72;
+    controls.maxZoom = phone ? 3.4 : 2.6;
   }
   syncControls();
   phoneQuery.addEventListener('change', syncControls);
@@ -399,6 +416,7 @@ export function createOffice(stage, hooks) {
 
   let state = null;
   let builtSig = '';
+  let roomApis = [];
   let levels = [];
   let records = [];
   let pickables = [];
@@ -422,20 +440,42 @@ export function createOffice(stage, hooks) {
   function buildInterior(parent, floor) {
     addCurtain(parent, mats, W - 0.8, 2.7, 0, -D / 2 + 0.28, 0);
     addCurtain(parent, mats, D - 1.2, 2.7, W / 2 - 0.28, 0.2, Math.PI / 2);
-    addPlant(parent, mats, -5.3, 3.5, 1);
+    const ops = floor.theme === 'lounge';
+    if (ops) addPlant(parent, mats, 0.15, 3.85, 0.8);
+    else addPlant(parent, mats, -5.3, 3.5, 1);
     addPlant(parent, mats, 5.2, -2.6, 0.9);
     addPlant(parent, mats, -5.4, -3.4, 0.75);
-    const seats = [
-      ...addDeskRow(parent, mats, -0.55),
-      ...addDeskRow(parent, mats, 1.55),
-    ];
+    const seats = ops
+      ? [
+        ...addDeskRow(parent, mats, -1.15, { origin: -0.2, gap: 1.75, count: 4 }),
+        ...addDeskRow(parent, mats, 0.55, { origin: -0.2, gap: 1.75, count: 4 }),
+      ]
+      : [
+        ...addDeskRow(parent, mats, -0.55),
+        ...addDeskRow(parent, mats, 1.55),
+      ];
     const lounge = addTheme(parent, mats, floor.theme || 'open');
+    if (floor.theme !== 'meeting') addMeetingTable(parent, mats, ops ? 1.6 : 2.15, -4.05);
+    addWallArt(parent, mats);
+    const kaiOffice = ops ? addKaiOffice(parent, mats) : null;
+    if (kaiOffice) {
+      roomApis.push(kaiOffice);
+      kaiOffice.group.traverse((obj) => {
+        if (!obj.isMesh) return;
+        pickables.push(obj);
+      });
+    }
     let sleepers = 0;
+    let seatCursor = 0;
     floor.bots.forEach((name, index) => {
-      const look = resolveLook(name, state.looks[name]);
+      const look = lookFor(state, name);
       const visual = createCharacter(name, look);
-      const seat = seats[index % seats.length];
-      const seatPos = seats.length ? seat : { x: -1 + index, z: 0, screenMat: null };
+      const inOffice = name === 'Kai' && kaiOffice;
+      const seat = seats[seatCursor % Math.max(seats.length, 1)];
+      if (!inOffice) seatCursor += 1;
+      const seatPos = inOffice
+        ? { x: kaiOffice.desk.x, z: kaiOffice.desk.z, screenMat: null }
+        : (seats.length ? seat : { x: -1 + index, z: 0, screenMat: null });
       visual.root.position.set(seatPos.x, 0.46, seatPos.z);
       parent.add(visual.root);
       visual.pickRoot.traverse((obj) => {
@@ -449,15 +489,20 @@ export function createOffice(stage, hooks) {
         name,
         visual,
         seat: { x: seatPos.x, z: seatPos.z },
+        face: inOffice ? kaiOffice.deskFace : null,
         screenMat: seatPos.screenMat,
         lounge: { x: lounge.x - sleepIndex * 0.45, z: lounge.z },
         homeKey: floor.key,
         floorKey: floor.key,
+        office: inOffice ? kaiOffice : null,
+        nextBoard: 7,
       });
     });
   }
 
   function build(floors) {
+    roomApis.forEach((api) => api.dispose());
+    roomApis = [];
     disposeTree(building);
     building.clear();
     records = [];
@@ -497,7 +542,7 @@ export function createOffice(stage, hooks) {
     return floors.map((floor) => `${floor.key}:${floor.theme}:${floor.bots.join('\u0001')}`).join('|')
       + '#'
       + (state?.roster || []).map((name) => {
-        const look = resolveLook(name, state.looks[name]);
+        const look = lookFor(state, name);
         return `${look.shape}:${look.color}:${look.accessory}`;
       }).join(';');
   }
@@ -719,15 +764,7 @@ export function createOffice(stage, hooks) {
       prev.x = event.clientX;
       prev.y = event.clientY;
       if (dx || dy) down.moved = true;
-      if (pointers.size >= 2 && pinchDist > 0) {
-        const span = touchDistance();
-        camera.zoom = THREE.MathUtils.clamp(pinchZoom * (span / pinchDist), controls.minZoom, controls.maxZoom);
-        camera.updateProjectionMatrix();
-        userZoomed = true;
-        zoomAnim = null;
-      } else if (pointers.size === 1) {
-        panPixels(dx, dy);
-      }
+      if (pointers.size === 1 && pinchDist === 0) panPixels(dx, dy);
       return;
     }
     if (event.pointerType === 'touch') return;
@@ -736,6 +773,50 @@ export function createOffice(stage, hooks) {
       hovered = name;
       renderer.domElement.style.cursor = name ? 'pointer' : '';
     }
+  });
+  function touchSpan(touches) {
+    if (!touches || touches.length < 2) return 0;
+    return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+  }
+
+  function beginPinch(touches) {
+    const span = touchSpan(touches);
+    if (span <= 0) return;
+    pinchDist = span;
+    pinchZoom = camera.zoom;
+    userZoomed = true;
+    zoomAnim = null;
+    down.moved = true;
+  }
+
+  function applyPinch(touches) {
+    const span = touchSpan(touches);
+    if (pinchDist <= 0 || span <= 0) return;
+    camera.zoom = THREE.MathUtils.clamp(
+      pinchZoom * (span / pinchDist),
+      controls.minZoom,
+      controls.maxZoom,
+    );
+    camera.updateProjectionMatrix();
+    userZoomed = true;
+    zoomAnim = null;
+  }
+
+  renderer.domElement.addEventListener('touchstart', (event) => {
+    if (!phoneLayout() || event.touches.length < 2) return;
+    beginPinch(event.touches);
+  }, { passive: true });
+  renderer.domElement.addEventListener('touchmove', (event) => {
+    if (!phoneLayout() || event.touches.length < 2) return;
+    event.preventDefault();
+    if (pinchDist <= 0) beginPinch(event.touches);
+    applyPinch(event.touches);
+  }, { passive: false });
+  renderer.domElement.addEventListener('touchend', (event) => {
+    if (event.touches.length < 2) pinchDist = 0;
+  });
+  renderer.domElement.addEventListener('touchcancel', () => {
+    pinchDist = 0;
   });
   renderer.domElement.addEventListener('pointercancel', (event) => {
     pointers.delete(event.pointerId);
@@ -759,6 +840,10 @@ export function createOffice(stage, hooks) {
     camera.updateProjectionMatrix();
     renderer.setSize(width, height, false);
     labelRenderer.setSize(width, height);
+    const labels = labelRenderer.domElement;
+    labels.style.inset = 'auto';
+    labels.style.left = '0px';
+    labels.style.top = '0px';
     if (levels.length && !userZoomed) frameFloor();
   }
   const observer = new ResizeObserver(() => resize());
@@ -825,7 +910,7 @@ export function createOffice(stage, hooks) {
     if (!record.trip && partner && record.finishedErrand !== errandKey) {
       record.trip = { phase: 'stand', since: elapsed, kind: 'bot', partnerName: partner.name, key: errandKey };
     }
-    if (!record.trip && !partner && presentation.status === 'idle' && record.homeKey === '__ops__' && elapsed > 24) {
+    if (!record.trip && !partner && !record.office && presentation.status === 'idle' && record.homeKey === '__ops__' && elapsed > 24) {
       const mates = records.filter((item) => item.homeKey === '__ops__');
       const index = mates.findIndex((item) => item.name === record.name);
       const period = 22;
@@ -834,8 +919,32 @@ export function createOffice(stage, hooks) {
         record.trip = { phase: 'stand', since: elapsed, kind: 'coffee', key: `coffee-${Math.floor(elapsed)}` };
       }
     }
+    if (record.office) {
+      const idle = presentation.status === 'idle';
+      const spot = idle ? record.office.sofa : record.office.desk;
+      const face = idle ? record.office.sofaFace : record.office.deskFace;
+      record.seat.x = spot.x;
+      record.seat.z = spot.z;
+      record.face = face;
+      if (record.trip && record.trip.kind === 'board' && idle) record.trip = null;
+    }
+    if (!record.trip && record.office && presentation.status === 'working' && !partner && elapsed > record.nextBoard) {
+      record.trip = { phase: 'out', since: elapsed, kind: 'board', key: `board-${Math.floor(elapsed)}` };
+      record.nextBoard = elapsed + 16;
+    }
     if (!record.trip) {
       if (record.floorKey !== record.homeKey) attachFloor(record, record.homeKey);
+      if (record.office) {
+        const dist = Math.hypot(
+          record.visual.root.position.x - record.seat.x,
+          record.visual.root.position.z - record.seat.z,
+        );
+        return {
+          visit: { x: record.seat.x, z: record.seat.z, faceX: record.face.x, faceZ: record.face.z },
+          gait: dist > 0.2 ? 'walk' : 'sit',
+          nod: 0,
+        };
+      }
       return { visit: null, gait: 'sit', nod: 0 };
     }
     const trip = record.trip;
@@ -866,6 +975,25 @@ export function createOffice(stage, hooks) {
       if (trip.phase === 'back') {
         if (record.floorKey !== record.homeKey) attachFloor(record, record.homeKey);
         if (Math.hypot(record.visual.root.position.x - record.seat.x, record.visual.root.position.z - record.seat.z) < 0.12) next('sit');
+        return { visit: null, gait: 'walk', nod: 0 };
+      }
+    } else if (trip.kind === 'board' && record.office) {
+      const spot = {
+        x: record.office.boardSpot.x,
+        z: record.office.boardSpot.z,
+        faceX: record.office.boardFace.x,
+        faceZ: record.office.boardFace.z,
+      };
+      if (trip.phase === 'out') {
+        if (Math.hypot(record.visual.root.position.x - spot.x, record.visual.root.position.z - spot.z) < 0.16) next('pause');
+        return { visit: spot, gait: 'walk', nod: 0 };
+      }
+      if (trip.phase === 'pause') {
+        if (age >= 1.3) next('back');
+        return { visit: spot, gait: 'stand', nod: Math.min(age / 0.7, 1) };
+      }
+      if (trip.phase === 'back') {
+        if (Math.hypot(record.visual.root.position.x - record.seat.x, record.visual.root.position.z - record.seat.z) < 0.16) next('sit');
         return { visit: null, gait: 'walk', nod: 0 };
       }
     } else if (trip.phase === 'stand') {
@@ -945,6 +1073,8 @@ export function createOffice(stage, hooks) {
     }
     if (!phoneLayout()) controls.update();
 
+    for (const api of roomApis) api.update(state, now);
+
     for (const record of records) {
       const level = levels.find((item) => item.key === record.floorKey);
       const shown = level && level.interior.visible;
@@ -962,6 +1092,7 @@ export function createOffice(stage, hooks) {
         visit: plan.visit,
         gait: plan.gait,
         nod: plan.nod,
+        face: record.face,
         showStep: selected === record.name,
         showName: hovered === record.name || selected === record.name,
         step: presentation.step,
@@ -985,6 +1116,7 @@ export function createOffice(stage, hooks) {
     renderer.render(scene, camera);
     labelRenderer.render(scene, camera);
     if (frames === 1) document.body.dataset.ready = '1';
+    document.body.dataset.zoom = camera.zoom.toFixed(3);
   }
 
   renderer.setAnimationLoop(loop);

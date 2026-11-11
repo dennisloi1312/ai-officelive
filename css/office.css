@@ -266,6 +266,47 @@ body:has(#banner:not([hidden])) #left { top: 156px; }
   pointer-events: none;
 }
 
+#usage-dock { display: none; }
+
+.usage-card { display: flex; flex-direction: column; gap: 8px; }
+.usage-card h2 { margin: 0; }
+.usage-top, .usage-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+.usage-pct {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.usage-track {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.usage-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #34C759;
+}
+.usage-card.is-amber .usage-fill { background: #F5A524; }
+.usage-card.is-red .usage-fill { background: #FF5A5F; }
+.usage-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 90%;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.72);
+}
+.usage-meta, .usage-updated { margin: 0; font-size: 11px; color: #A1A1AA; }
+.usage-empty { margin: 0; color: #A1A1AA; font-size: 12px; }
+
 #left > *,
 #right > *,
 #activity > * { pointer-events: auto; }
@@ -694,6 +735,28 @@ body:has(#banner:not([hidden])) #left { top: 156px; }
   white-space: nowrap;
 }
 
+.name-label {
+  box-shadow: inset 3px 0 0 var(--bot, #a1a1aa), var(--shadow);
+}
+
+.name-label .status-dot {
+  background: var(--bot, #a1a1aa);
+}
+
+.door-sign {
+  color: #1E86FC;
+  background: rgba(250, 250, 248, 0.94);
+  border: 1px solid rgba(30, 134, 252, 0.55);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-family: Inter, ui-sans-serif, system-ui, "Noto Sans TC", "PingFang TC", sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  box-shadow: var(--shadow);
+}
+
 .bubble {
   padding: 4px 8px;
   font-size: 12px;
@@ -825,6 +888,11 @@ body:has(#banner:not([hidden])) #left { top: 156px; }
   }
 
   body:has(#banner:not([hidden])) #left { top: auto; }
+
+  #usage-dock {
+    display: block;
+    padding: 0 96px 4px 0;
+  }
 
   .zoom {
     right: 12px;

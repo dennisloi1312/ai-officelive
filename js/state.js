@@ -120,6 +120,26 @@ export function resolveLook(name, stored) {
   return sanitizeLook(stored, seeded);
 }
 
+/** Full-width bars and compatibility forms still match the roster name. */
+export function canonName(name) {
+  return String(name || '')
+    .normalize('NFKC')
+    .trim()
+    .replace(/[|\uFF5C\u2502\u4E28]/g, '|');
+}
+
+export function lookFor(state, name) {
+  const looks = state && state.looks;
+  if (!looks) return resolveLook(name, null);
+  if (Object.prototype.hasOwnProperty.call(looks, name)) return resolveLook(name, looks[name]);
+  const key = canonName(name);
+  if (key !== name && Object.prototype.hasOwnProperty.call(looks, key)) return resolveLook(name, looks[key]);
+  for (const stored of Object.keys(looks)) {
+    if (canonName(stored) === key) return resolveLook(name, looks[stored]);
+  }
+  return resolveLook(name, null);
+}
+
 export function createEmptyState() {
   return {
     roster: [],
@@ -170,23 +190,23 @@ function finiteNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-export function sanitizeUsage(payload) {
+export function sanitizeUsage(payload, at) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
-  const total = finiteNumber(payload.total_used_pct);
-  const bots = Object.create(null);
-  if (payload.bots && typeof payload.bots === 'object' && !Array.isArray(payload.bots)) {
-    for (const key of Object.keys(payload.bots)) {
-      const name = sanitizeName(key);
-      const n = finiteNumber(payload.bots[key]);
-      if (!name || n == null) continue;
-      bots[name] = Math.round(n * 10) / 10;
-      if (Object.keys(bots).length >= MAX_BOTS) break;
-    }
-  }
+  const source = payload.usage && typeof payload.usage === 'object' && !Array.isArray(payload.usage)
+    ? payload.usage
+    : payload;
+  const weekly = finiteNumber(source.weekly_pct);
+  if (weekly == null) return null;
+  const pct = Math.round(Math.min(100, Math.max(0, weekly)) * 10) / 10;
+  const resets = typeof source.resets_at === 'string' ? clip(source.resets_at.trim(), 40) : '';
+  const plan = typeof source.plan === 'string' ? clip(source.plan.trim(), 40) : '';
+  const updatedRaw = typeof source.updated_at === 'string' ? Date.parse(source.updated_at) : NaN;
+  const updatedAt = Number.isFinite(updatedRaw) ? updatedRaw : (Number.isFinite(at) ? at : Date.now());
   return {
-    total_used_pct: total == null ? null : Math.round(total * 10) / 10,
-    resets_at: typeof payload.resets_at === 'string' ? clip(payload.resets_at.trim(), 40) : '',
-    bots,
+    weekly_pct: pct,
+    resets_at: resets,
+    plan,
+    updated_at: updatedAt,
   };
 }
 
@@ -374,8 +394,9 @@ export function applyPayload(state, payload, at) {
     }
   }
 
-  if (payload.type === 'usage') {
-    state.usage = sanitizeUsage(payload);
+  const usage = sanitizeUsage(payload, at);
+  if (usage) {
+    state.usage = usage;
     changed = true;
   }
 
@@ -433,7 +454,7 @@ export function stateFromPlain(data) {
     }
   }
   if (data.usage && typeof data.usage === 'object') {
-    state.usage = sanitizeUsage({ type: 'usage', ...data.usage });
+    state.usage = sanitizeUsage({ usage: data.usage }, Number(data.usage.updated_at) || 0);
   }
   if (Array.isArray(data.activity)) {
     for (const item of data.activity) {
@@ -532,17 +553,6 @@ export function createDemoState() {
     routines: {
       bot: '研究｜文獻研究員',
       items: [{ name: '文獻掃描', schedule: 'daily 09:00', next_run: hoursFromNow(5 * 60 * 60 * 1000) }],
-    },
-  }, now);
-  applyPayload(state, {
-    type: 'usage',
-    total_used_pct: 37,
-    resets_at: hoursFromNow(6 * 60 * 60 * 1000),
-    bots: {
-      Kai: 8.2, Momo: 3.4, Jun: 4.1, Sol: 2.2, Ren: 1.4, 小墨: 1.1,
-      '研究｜文獻研究員': 11.5, Nori: 4, Lin: 3.2, Page: 0.8,
-      Quill: 2.2, Byte: 5.1, Commit: 3.6, Branch: 1.5,
-      Pixel: 5.4, Dot: 1.2, Hue: 2.8, Frame: 1.7,
     },
   }, now);
   return state;

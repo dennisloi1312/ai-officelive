@@ -1,5 +1,5 @@
 import { el } from './dom.js';
-import { floorPlan, presentBot, resolveLook, themeColor } from './state.js';
+import { floorPlan, lookFor, presentBot, themeColor } from './state.js';
 
 const LABEL = {
   working: 'Working',
@@ -117,7 +117,7 @@ export function mountUI(hooks) {
   function botButton(item, selected) {
     const button = el('button', `bot-row${selected === item.name ? ' is-selected' : ''}`);
     button.type = 'button';
-    const look = resolveLook(item.name, view.state.looks[item.name]);
+    const look = lookFor(view.state, item.name);
     const text = el('span', 'bot-copy');
     const name = el('span', 'bot-name', item.name);
     name.dir = 'auto';
@@ -171,7 +171,7 @@ export function mountUI(hooks) {
       dots.title = 'Each dot is that bot’s own color, not its status.';
       floor.bots.slice(0, 6).forEach((bot) => {
         const dot = el('span', 'mini');
-        dot.style.background = resolveLook(bot, view.state.looks[bot]).color;
+        dot.style.background = lookFor(view.state, bot).color;
         dots.appendChild(dot);
       });
       button.append(badge, name, dots, el('span', 'floor-count', String(floor.bots.length)));
@@ -264,6 +264,87 @@ export function mountUI(hooks) {
     left.appendChild(section('routines', 'Routines', names.length, '', routineBody));
   }
 
+  const MACAU = 'Asia/Macau';
+
+  function macauWhen(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return new Intl.DateTimeFormat('zh-Hant-HK', {
+      timeZone: MACAU,
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(date);
+  }
+
+  function countdown(value, now) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const ms = date.getTime() - now;
+    if (ms <= 0) return '已過重設時間';
+    const minutes = Math.floor(ms / 60000);
+    const days = Math.floor(minutes / (60 * 24));
+    const hours = Math.floor((minutes % (60 * 24)) / 60);
+    const mins = minutes % 60;
+    if (days > 0) return `還有 ${days} 日 ${hours} 小時`;
+    if (hours > 0) return `還有 ${hours} 小時 ${mins} 分`;
+    return `還有 ${Math.max(mins, 1)} 分`;
+  }
+
+  function updatedAgo(ms, now) {
+    if (!Number.isFinite(ms)) return '';
+    const minutes = Math.floor((now - ms) / 60000);
+    if (minutes < 1) return '剛剛更新';
+    if (minutes < 60) return `${minutes} 分鐘前更新`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 48) return `${hours} 小時前更新`;
+    return `${Math.floor(hours / 24)} 日前更新`;
+  }
+
+  function renderUsage(now) {
+    const card = el('section', 'glass usage-card');
+    card.setAttribute('aria-label', 'AI 用量');
+    card.appendChild(el('h2', 'card-label', 'AI 用量'));
+    const usage = view.state.usage;
+    if (!usage || !Number.isFinite(usage.weekly_pct)) {
+      card.appendChild(el('p', 'usage-empty', '暫無用量資料'));
+    } else {
+      const pct = usage.weekly_pct;
+      if (pct >= 90) card.classList.add('is-red');
+      else if (pct >= 75) card.classList.add('is-amber');
+      const top = el('div', 'usage-top');
+      top.append(el('span', null, '本週已用'), el('b', 'usage-pct', `${pct}%`));
+      const track = el('div', 'usage-track');
+      track.setAttribute('role', 'meter');
+      track.setAttribute('aria-valuemin', '0');
+      track.setAttribute('aria-valuemax', '100');
+      track.setAttribute('aria-valuenow', String(pct));
+      track.setAttribute('aria-label', '本週已用');
+      const fill = el('div', 'usage-fill');
+      fill.style.width = `${pct}%`;
+      track.append(fill, el('span', 'usage-mark'));
+      card.append(top, track);
+      const meta = el('p', 'usage-meta');
+      const when = usage.resets_at ? macauWhen(usage.resets_at) : '';
+      const left = usage.resets_at ? countdown(usage.resets_at, now) : '';
+      meta.append(el('span', null, when ? `重設 ${when}` : '重設時間未提供'));
+      if (left) meta.appendChild(el('span', null, left));
+      card.appendChild(meta);
+      const plan = el('p', 'usage-meta', usage.plan ? `方案 ${usage.plan}` : '方案未提供');
+      const ago = el('p', 'usage-updated', updatedAgo(usage.updated_at, now));
+      card.append(plan, ago);
+    }
+    const phone = window.matchMedia('(max-width: 640px)').matches;
+    const dock = document.getElementById('usage-dock');
+    if (phone && dock) dock.replaceChildren(card);
+    else {
+      if (dock) dock.replaceChildren();
+      left.prepend(card);
+    }
+  }
+
   function renderRight(floors, people, now) {
     right.replaceChildren();
     const floor = floors[view.floorIndex] || floors[0];
@@ -290,11 +371,6 @@ export function mountUI(hooks) {
     if (!here.length) list.appendChild(el('p', 'empty', 'This floor is empty.'));
     here.forEach((item) => list.appendChild(botButton(item, view.selected)));
     cardWrap.append(head, list);
-    if (view.state.usage && view.state.usage.total_used_pct != null) {
-      const usage = el('p', 'usage-line', `${view.state.usage.total_used_pct}% used`);
-      if (view.state.usage.resets_at) usage.appendChild(el('span', null, ` · resets ${formatWhen(view.state.usage.resets_at)}`));
-      cardWrap.appendChild(usage);
-    }
     right.appendChild(cardWrap);
     void now;
   }
@@ -337,7 +413,7 @@ export function mountUI(hooks) {
     handle.addEventListener('click', () => hooks.onClose());
     card.appendChild(handle);
     const floor = floors.find((entry) => entry.bots.includes(item.name));
-    const look = resolveLook(item.name, view.state.looks[item.name]);
+    const look = lookFor(view.state, item.name);
     const top = el('div', 'card-top');
     const id = el('div');
     const name = el('h2', null, item.name);
@@ -360,7 +436,9 @@ export function mountUI(hooks) {
       card.appendChild(step);
     }
     const tiles = el('div', 'tiles');
-    const usageValue = view.state.usage && view.state.usage.bots ? view.state.usage.bots[item.name] : null;
+    const usageValue = view.state.usage && Number.isFinite(view.state.usage.weekly_pct)
+      ? view.state.usage.weekly_pct
+      : null;
     const routineCount = view.state.routines[item.name]?.length || 0;
     [
       [formatAge(item.age) || '—', 'in status'],
@@ -400,6 +478,7 @@ export function mountUI(hooks) {
     renderSummary(tally(view.state, now));
     renderTabs(floors);
     renderLeft(floors, people);
+    renderUsage(now);
     renderRight(floors, people, now);
     renderActivity();
     renderCard(people, floors, now);
@@ -417,7 +496,7 @@ export function mountUI(hooks) {
       bucket,
       state.roster.join(','),
       (state.activity || []).length,
-      state.usage ? state.usage.total_used_pct : '',
+      state.usage ? `${state.usage.weekly_pct}:${state.usage.updated_at}` : '',
       ...state.roster.map((name) => {
         const item = presentBot(state.bots[name], now, name);
         return `${name}:${item.status}:${item.raw}:${item.step}`;
