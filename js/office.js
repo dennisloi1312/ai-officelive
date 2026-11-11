@@ -108,21 +108,105 @@ function makeMaterials() {
   };
 }
 
-function addPlant(parent, mats, x, z, scale) {
+const plantKit = {};
+
+function sharedPlantGeo(key, build) {
+  if (!plantKit[key]) {
+    const geometry = build();
+    geometry.userData.shared = true;
+    plantKit[key] = geometry;
+  }
+  return plantKit[key];
+}
+
+function addPlant(parent, mats, x, z, scale = 1, cast = false, y = 0) {
   const group = new THREE.Group();
-  const pot = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.2 * scale, 0.16 * scale, 0.18 * scale, 18), mats.desk));
-  pot.position.y = 0.09 * scale;
-  const lip = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.22 * scale, 0.2 * scale, 0.05 * scale, 18), mats.white));
-  lip.position.y = 0.18 * scale;
-  const trunk = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.035 * scale, 0.045 * scale, 0.16 * scale, 8), mats.leg));
-  trunk.position.y = 0.26 * scale;
-  const crown = shade(new THREE.Mesh(new THREE.SphereGeometry(0.11 * scale, 14, 10), mats.leaf));
-  crown.position.y = 0.38 * scale;
-  const bud = shade(new THREE.Mesh(new THREE.SphereGeometry(0.07 * scale, 10, 8), mats.leafDark));
-  bud.position.set(0.08 * scale, 0.34 * scale, 0.04 * scale);
-  group.add(pot, lip, trunk, crown, bud);
-  group.position.set(x, 0, z);
+  const pot = new THREE.Mesh(sharedPlantGeo('pot', () => new THREE.CylinderGeometry(0.16, 0.12, 0.15, 7)), mats.desk);
+  const lip = new THREE.Mesh(sharedPlantGeo('lip', () => new THREE.CylinderGeometry(0.18, 0.16, 0.04, 7)), mats.white);
+  const stem = new THREE.Mesh(sharedPlantGeo('stem', () => new THREE.CylinderGeometry(0.02, 0.028, 0.14, 5)), mats.leg);
+  const crown = new THREE.Mesh(sharedPlantGeo('leaf', () => new THREE.SphereGeometry(0.13, 7, 5)), mats.leaf);
+  const bud = new THREE.Mesh(sharedPlantGeo('bud', () => new THREE.SphereGeometry(0.07, 6, 4)), mats.leafDark);
+  pot.position.y = 0.075;
+  lip.position.y = 0.15;
+  stem.position.y = 0.24;
+  crown.position.y = 0.36;
+  bud.position.set(0.08, 0.32, 0.04);
+  group.add(pot, lip, stem, crown, bud);
+  group.traverse((obj) => {
+    if (!obj.isMesh) return;
+    obj.castShadow = cast;
+    obj.receiveShadow = cast;
+  });
+  group.scale.setScalar(scale);
+  group.position.set(x, y, z);
   parent.add(group);
+}
+
+let lineTex = null;
+
+function screenLines() {
+  if (lineTex) return lineTex;
+  const canvas = document.createElement('canvas');
+  canvas.width = 32;
+  canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#f7f9fc';
+  ctx.fillRect(0, 0, 32, 32);
+  ctx.fillStyle = 'rgba(18, 22, 32, 0.28)';
+  for (let y = 2; y < 32; y += 6) ctx.fillRect(0, y, 32, 2);
+  lineTex = new THREE.CanvasTexture(canvas);
+  lineTex.wrapS = THREE.RepeatWrapping;
+  lineTex.wrapT = THREE.RepeatWrapping;
+  lineTex.colorSpace = THREE.SRGBColorSpace;
+  return lineTex;
+}
+
+function paintScreen(mat, status, look, time, phase) {
+  const mode = status === 'working' ? 'working'
+    : status === 'waiting_user' ? 'waiting'
+    : status === 'error' ? 'error'
+    : status === 'done' ? 'done' : 'idle';
+  if (mat.userData.mode !== mode) {
+    mat.userData.mode = mode;
+    if (mode === 'working') {
+      mat.map = screenLines();
+      mat.color.copy(look);
+      mat.emissive.copy(look);
+    } else if (mode === 'waiting') {
+      mat.map = null;
+      mat.color.set('#F5A524');
+      mat.emissive.set('#F5A524');
+    } else if (mode === 'error') {
+      mat.map = null;
+      mat.color.set('#FF5A5F');
+      mat.emissive.set('#FF5A5F');
+    } else if (mode === 'done') {
+      mat.map = null;
+      mat.color.copy(look).multiplyScalar(0.55);
+      mat.emissive.copy(look);
+    } else {
+      mat.map = null;
+      mat.color.set('#16181e');
+      mat.emissive.set('#000000');
+    }
+    mat.needsUpdate = true;
+  }
+  if (mode === 'working') mat.emissiveIntensity = 0.5 + Math.sin(time * 2.2 + phase) * 0.08;
+  else if (mode === 'waiting') mat.emissiveIntensity = 0.26;
+  else if (mode === 'error') mat.emissiveIntensity = 0.3;
+  else if (mode === 'done') mat.emissiveIntensity = 0.14;
+  else mat.emissiveIntensity = 0;
+}
+
+function addWorkChair(parent, mats, x, z) {
+  const seat = new THREE.Mesh(sharedPlantGeo('seat', () => new THREE.CylinderGeometry(0.16, 0.18, 0.16, 8)), mats.white);
+  seat.position.set(x, 0.12, z);
+  seat.castShadow = true;
+  seat.receiveShadow = true;
+  const back = box(0.34, 0.16, 0.05, mats.white);
+  back.position.set(x - 0.24, 0.28, z - 0.24);
+  back.rotation.y = Math.PI / 4;
+  parent.add(seat, back);
 }
 
 function addCurtain(parent, mats, width, height, x, z, rotY) {
@@ -161,9 +245,8 @@ function addDeskRow(parent, mats, z, opts = {}) {
     const legR = box(0.07, 0.74, 0.07, mats.leg);
     legR.position.set(x + deskW * 0.38, 0.37, z);
     parent.add(top, legL, legR);
-    const stool = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.42, 22), mats.white));
-    stool.position.set(x, 0.21, z - 1.35);
-    parent.add(stool);
+    addWorkChair(parent, mats, x, z - 1.35);
+    addPlant(parent, mats, x + 0.4, z + 0.32, 0.32, false, 0.78);
     const base = box(0.46, 0.025, 0.3, mats.laptop, false);
     base.position.set(x, 0.79, z + 0.05);
     const screenMat = new THREE.MeshStandardMaterial({
@@ -238,12 +321,14 @@ function addTheme(parent, mats, theme) {
     const spout = box(0.08, 0.06, 0.1, mats.laptop, false);
     spout.position.set(5.35, 0.78, 3.38);
     parent.add(table, cup, cupB, counter, machine, spout);
+    addPlant(parent, mats, 6.05, 4.15, 0.7);
     return { x: 4.15, z: 1.85 };
   }
   if (theme === 'library') {
     addShelf(parent, mats, -5.15, -2.4, 0.15);
     addShelf(parent, mats, -5.15, -0.7, 0.15);
     addShelf(parent, mats, -3.55, -3.55, 0);
+    addPlant(parent, mats, -3.9, 4.35, 0.75);
     return { x: -3.4, z: 3.1 };
   }
   if (theme === 'meeting') {
@@ -257,6 +342,7 @@ function addTheme(parent, mats, theme) {
       stool.position.set(4.35 + Math.cos(angle) * 1.32, 0.21, 3.35 + Math.sin(angle) * 0.78);
       parent.add(stool);
     }
+    addPlant(parent, mats, 5.7, 4.35, 0.8);
     return { x: -4.6, z: 3.2 };
   }
   if (theme === 'media') {
@@ -274,10 +360,12 @@ function addTheme(parent, mats, theme) {
     board.position.set(2.3, 1.35, -3.75);
     parent.add(stand, tv, board);
     addSofa(parent, mats, 0.2, -2.15, Math.PI);
+    addPlant(parent, mats, -1.6, -4.15, 0.7);
     return { x: 4.4, z: 3.2 };
   }
-  addPlant(parent, mats, 4.4, 3.2, 1.1);
-  return { x: 4.2, z: 3.3 };
+    addPlant(parent, mats, 4.4, 3.2, 1.1, true);
+    addPlant(parent, mats, -5.6, 0.4, 0.65);
+    return { x: 4.2, z: 3.3 };
 }
 
 export function createOffice(stage, hooks) {
@@ -439,10 +527,15 @@ export function createOffice(stage, hooks) {
     addCurtain(parent, mats, W - 0.8, 2.7, 0, -D / 2 + 0.28, 0);
     addCurtain(parent, mats, D - 1.2, 2.7, W / 2 - 0.28, 0.2, Math.PI / 2);
     const ops = floor.theme === 'lounge';
-    if (ops) addPlant(parent, mats, 0.15, 3.85, 0.8);
-    else addPlant(parent, mats, -5.3, 3.5, 1);
-    addPlant(parent, mats, 5.2, -2.6, 0.9);
+    if (ops) addPlant(parent, mats, 0.15, 3.85, 0.8, true);
+    else addPlant(parent, mats, -5.3, 3.5, 1, true);
+    addPlant(parent, mats, 5.2, -2.6, 0.9, true);
     addPlant(parent, mats, -5.4, -3.4, 0.75);
+    const corners = ops
+      ? [[5.65, 4.4, 0.85], [-5.8, -4.2, 0.8], [5.5, -4.35, 0.7], [1.4, 4.5, 0.65]]
+      : [[-5.75, 4.45, 0.9], [5.7, 4.4, 0.8], [-5.8, -4.25, 0.75], [5.55, -4.4, 0.7]];
+    corners.forEach(([x, z, scale], index) => addPlant(parent, mats, x, z, scale, index === 0));
+    addPlant(parent, mats, ops ? -2.2 : -2.5, -4.55, 0.62);
     const seats = ops
       ? [
         ...addDeskRow(parent, mats, -1.45, { origin: -1.45, gap: 2.4, count: 4 }),
@@ -453,7 +546,12 @@ export function createOffice(stage, hooks) {
         ...addDeskRow(parent, mats, 1.85, { origin: -3.9, gap: 2.7, count: 4 }),
       ];
     const lounge = addTheme(parent, mats, floor.theme || 'open');
-    if (floor.theme !== 'meeting') addMeetingTable(parent, mats, ops ? 1.6 : 2.15, -4.05);
+    if (floor.theme !== 'meeting') {
+      const tableX = ops ? 1.6 : 2.15;
+      const tableZ = -4.05;
+      addMeetingTable(parent, mats, tableX, tableZ);
+      addPlant(parent, mats, tableX + 1.35, tableZ + 0.15, 0.7);
+    }
     addWallArt(parent, mats);
     const kaiOffice = ops ? addKaiOffice(parent, mats) : null;
     if (kaiOffice) {
@@ -1072,6 +1170,8 @@ export function createOffice(stage, hooks) {
     if (!phoneLayout()) controls.update();
 
     for (const api of roomApis) api.update(state, now);
+    const lines = screenLines();
+    lines.offset.y = (elapsed * 0.07) % 1;
 
     for (const record of records) {
       const level = levels.find((item) => item.key === record.floorKey);
@@ -1100,12 +1200,8 @@ export function createOffice(stage, hooks) {
         hold: !!motion || dragging,
       });
       const screen = record.screenMat;
-      if (screen) {
-        const working = presentation.status === 'working';
-        screen.emissive.set(working ? '#38bdf8' : '#0f172a');
-        screen.emissiveIntensity = working ? 0.55 + Math.sin(elapsed * 4 + record.visual.phase) * 0.2 : 0.2;
-        screen.color.set(working ? '#e0f2fe' : '#334155');
-      }
+      if (screen) paintScreen(screen, presentation.status, record.visual.bodyMat.color, elapsed, record.visual.phase);
+      if (record.office) record.office.paintScreens(presentation.status, record.visual.bodyMat.color, elapsed, record.visual.phase);
     }
     ring.visible = false;
 

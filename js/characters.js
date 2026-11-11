@@ -347,7 +347,7 @@ export function updateCharacter(visual, ctx) {
   const gait = ctx.gait || 'sit';
   const sitting = gait === 'sit';
   const walking = gait === 'walk';
-  const sitY = 0.42 + visual.foot * 0.18;
+  const sitY = 0.52 + visual.foot * 0.1;
   const walkY = visual.foot;
 
   if (!motion.ready) {

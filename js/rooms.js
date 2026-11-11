@@ -180,26 +180,27 @@ function addGlassRun(group, materials, length, x, z, rotY, gap) {
 }
 
 function addChair(group, materials, x, z) {
-  const seat = box(0.42, 0.08, 0.42, materials.upholstery, true);
-  seat.position.set(x, 0.46, z);
-  const back = box(0.42, 0.4, 0.06, materials.upholstery, true);
-  back.position.set(x + 0.18, 0.7, z);
-  const post = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.28, 8), materials.leg));
-  post.position.set(x, 0.26, z);
-  const base = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.04, 6), materials.leg));
-  base.position.set(x, 0.08, z);
+  const seat = box(0.4, 0.07, 0.4, materials.upholstery, true);
+  seat.position.set(x, 0.28, z);
+  const back = box(0.38, 0.18, 0.05, materials.upholstery, true);
+  back.position.set(x - 0.22, 0.34, z - 0.22);
+  back.rotation.y = Math.PI / 4;
+  const post = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.2, 6), materials.leg));
+  post.position.set(x, 0.16, z);
+  const base = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.04, 6), materials.leg));
+  base.position.set(x, 0.06, z);
   group.add(seat, back, post, base);
 }
 
 function addOfficeSofa(group, materials, x, z) {
   const seat = box(1.2, 0.22, 0.52, materials.upholstery, true);
   seat.position.set(x, 0.32, z);
-  const back = box(1.2, 0.36, 0.12, materials.upholstery, true);
-  back.position.set(x, 0.52, z + 0.2);
-  const armL = box(0.1, 0.28, 0.52, materials.upholstery);
-  armL.position.set(x - 0.62, 0.4, z);
-  const armR = box(0.1, 0.28, 0.52, materials.upholstery);
-  armR.position.set(x + 0.62, 0.4, z);
+  const back = box(1.2, 0.18, 0.1, materials.upholstery, true);
+  back.position.set(x, 0.38, z - 0.24);
+  const armL = box(0.1, 0.14, 0.48, materials.upholstery);
+  armL.position.set(x - 0.62, 0.32, z);
+  const armR = box(0.1, 0.14, 0.48, materials.upholstery);
+  armR.position.set(x + 0.62, 0.32, z);
   group.add(seat, back, armL, armR);
 }
 
@@ -214,14 +215,18 @@ function addShelf(group, materials, x, z) {
   });
 }
 
-function addPot(group, materials, x, z) {
-  const pot = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.13, 0.16, 12), materials.desk));
-  pot.position.set(x, 0.08, z);
-  const leaf = shade(new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 8), materials.leaf));
-  leaf.position.set(x, 0.28, z);
-  const bud = shade(new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), materials.leafDark));
-  bud.position.set(x + 0.08, 0.26, z + 0.04);
-  group.add(pot, leaf, bud);
+function addPot(group, materials, x, z, y = 0, scale = 1) {
+  const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.11, 0.14, 7), materials.desk);
+  const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.13, 7, 5), materials.leaf);
+  const bud = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 4), materials.leafDark);
+  pot.position.set(0, 0.07, 0);
+  leaf.position.set(0, 0.24, 0);
+  bud.position.set(0.07, 0.22, 0.04);
+  const cluster = new THREE.Group();
+  cluster.add(pot, leaf, bud);
+  cluster.scale.setScalar(scale);
+  cluster.position.set(x, y, z);
+  group.add(cluster);
 }
 
 /**
@@ -353,10 +358,13 @@ export function addKaiOffice(parent, mats) {
   screens.forEach((screen) => {
     const shell = box(0.035, 0.4, 0.58, bezel);
     shell.position.set(-5.68, 1.05, screen.z);
-    const faceMat = new THREE.MeshBasicMaterial({
+    const faceMat = new THREE.MeshStandardMaterial({
       map: screen.canvas.texture,
-      toneMapped: false,
-      side: THREE.DoubleSide,
+      color: '#12141a',
+      emissive: '#000000',
+      emissiveIntensity: 0,
+      roughness: 0.6,
+      metalness: 0,
     });
     const face = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.32), faceMat);
     face.position.set(-5.64, 1.05, screen.z);
@@ -366,6 +374,7 @@ export function addKaiOffice(parent, mats) {
     group.add(shell, face, stand);
     screen.material = faceMat;
   });
+  const monitors = screens.map((screen) => screen.material);
   const keys = box(0.28, 0.02, 0.14, bezel);
   keys.position.set(-5.7, 0.79, 3.45);
   group.add(keys);
@@ -374,6 +383,9 @@ export function addKaiOffice(parent, mats) {
   addOfficeSofa(group, materials, -3.25, 3.05);
   addShelf(group, materials, -6.2, 2.55);
   addPot(group, materials, -3.7, 2.62);
+  addPot(group, materials, -6.15, 4.42, 0, 0.85);
+  addPot(group, materials, -2.75, 4.48, 0, 0.7);
+  addPot(group, materials, -5.05, 4.28, 0.78, 0.45);
 
   group.traverse((obj) => {
     if (obj.isMesh) obj.userData.botName = 'Kai';
@@ -384,11 +396,43 @@ export function addKaiOffice(parent, mats) {
   return {
     group,
     desk: { x: -4.95, z: 3.32 },
-    deskFace: { x: -6.1, z: 3.32 },
+    deskFace: { x: -4.05, z: 4.15 },
     sofa: { x: -3.25, z: 3.05 },
-    sofaFace: { x: -4.3, z: 3.05 },
+    sofaFace: { x: -2.4, z: 3.85 },
     boardSpot: { x: -4.55, z: 2.78 },
     boardFace: { x: -4.55, z: 2.2 },
+    paintScreens(status, look, time, phase) {
+      const mode = status === 'working' ? 'working'
+        : status === 'waiting_user' ? 'waiting'
+        : status === 'error' ? 'error'
+        : status === 'done' ? 'done' : 'idle';
+      monitors.forEach((mat) => {
+        if (mat.userData.mode !== mode) {
+          mat.userData.mode = mode;
+          if (mode === 'working') {
+            mat.color.set('#f7f8fa');
+            mat.emissive.copy(look);
+          } else if (mode === 'waiting') {
+            mat.color.set('#3a2e1c');
+            mat.emissive.set('#F5A524');
+          } else if (mode === 'error') {
+            mat.color.set('#3a1a1c');
+            mat.emissive.set('#FF5A5F');
+          } else if (mode === 'done') {
+            mat.color.set('#d5dbe3');
+            mat.emissive.copy(look);
+          } else {
+            mat.color.set('#101218');
+            mat.emissive.set('#000000');
+          }
+        }
+        if (mode === 'working') mat.emissiveIntensity = 0.48 + Math.sin(time * 2.2 + phase) * 0.07;
+        else if (mode === 'waiting') mat.emissiveIntensity = 0.22;
+        else if (mode === 'error') mat.emissiveIntensity = 0.26;
+        else if (mode === 'done') mat.emissiveIntensity = 0.12;
+        else mat.emissiveIntensity = 0;
+      });
+    },
     update(state, now) {
       if (!state) return;
       const floors = floorPlan(state);
