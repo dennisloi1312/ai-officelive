@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { createCharacter, updateCharacter } from './characters.js';
-import { DONE_MS, floorPlan, presentBot, resolveLook, visualMode } from './state.js';
+import { addKaiOffice, addMeetingTable, addWallArt } from './rooms.js';
+import { DONE_MS, floorPlan, lookFor, presentBot, visualMode } from './state.js';
 
 const W = 13.5;
 const D = 10.2;
@@ -107,21 +108,105 @@ function makeMaterials() {
   };
 }
 
-function addPlant(parent, mats, x, z, scale) {
+const plantKit = {};
+
+function sharedPlantGeo(key, build) {
+  if (!plantKit[key]) {
+    const geometry = build();
+    geometry.userData.shared = true;
+    plantKit[key] = geometry;
+  }
+  return plantKit[key];
+}
+
+function addPlant(parent, mats, x, z, scale = 1, cast = false, y = 0) {
   const group = new THREE.Group();
-  const pot = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.2 * scale, 0.16 * scale, 0.18 * scale, 18), mats.desk));
-  pot.position.y = 0.09 * scale;
-  const lip = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.22 * scale, 0.2 * scale, 0.05 * scale, 18), mats.white));
-  lip.position.y = 0.18 * scale;
-  const trunk = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.035 * scale, 0.045 * scale, 0.16 * scale, 8), mats.leg));
-  trunk.position.y = 0.26 * scale;
-  const crown = shade(new THREE.Mesh(new THREE.SphereGeometry(0.11 * scale, 14, 10), mats.leaf));
-  crown.position.y = 0.38 * scale;
-  const bud = shade(new THREE.Mesh(new THREE.SphereGeometry(0.07 * scale, 10, 8), mats.leafDark));
-  bud.position.set(0.08 * scale, 0.34 * scale, 0.04 * scale);
-  group.add(pot, lip, trunk, crown, bud);
-  group.position.set(x, 0, z);
+  const pot = new THREE.Mesh(sharedPlantGeo('pot', () => new THREE.CylinderGeometry(0.16, 0.12, 0.15, 7)), mats.desk);
+  const lip = new THREE.Mesh(sharedPlantGeo('lip', () => new THREE.CylinderGeometry(0.18, 0.16, 0.04, 7)), mats.white);
+  const stem = new THREE.Mesh(sharedPlantGeo('stem', () => new THREE.CylinderGeometry(0.02, 0.028, 0.14, 5)), mats.leg);
+  const crown = new THREE.Mesh(sharedPlantGeo('leaf', () => new THREE.SphereGeometry(0.13, 7, 5)), mats.leaf);
+  const bud = new THREE.Mesh(sharedPlantGeo('bud', () => new THREE.SphereGeometry(0.07, 6, 4)), mats.leafDark);
+  pot.position.y = 0.075;
+  lip.position.y = 0.15;
+  stem.position.y = 0.24;
+  crown.position.y = 0.36;
+  bud.position.set(0.08, 0.32, 0.04);
+  group.add(pot, lip, stem, crown, bud);
+  group.traverse((obj) => {
+    if (!obj.isMesh) return;
+    obj.castShadow = cast;
+    obj.receiveShadow = cast;
+  });
+  group.scale.setScalar(scale);
+  group.position.set(x, y, z);
   parent.add(group);
+}
+
+let lineTex = null;
+
+function screenLines() {
+  if (lineTex) return lineTex;
+  const canvas = document.createElement('canvas');
+  canvas.width = 32;
+  canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#f7f9fc';
+  ctx.fillRect(0, 0, 32, 32);
+  ctx.fillStyle = 'rgba(18, 22, 32, 0.28)';
+  for (let y = 2; y < 32; y += 6) ctx.fillRect(0, y, 32, 2);
+  lineTex = new THREE.CanvasTexture(canvas);
+  lineTex.wrapS = THREE.RepeatWrapping;
+  lineTex.wrapT = THREE.RepeatWrapping;
+  lineTex.colorSpace = THREE.SRGBColorSpace;
+  return lineTex;
+}
+
+function paintScreen(mat, status, look, time, phase) {
+  const mode = status === 'working' ? 'working'
+    : status === 'waiting_user' ? 'waiting'
+    : status === 'error' ? 'error'
+    : status === 'done' ? 'done' : 'idle';
+  if (mat.userData.mode !== mode) {
+    mat.userData.mode = mode;
+    if (mode === 'working') {
+      mat.map = screenLines();
+      mat.color.copy(look);
+      mat.emissive.copy(look);
+    } else if (mode === 'waiting') {
+      mat.map = null;
+      mat.color.set('#F5A524');
+      mat.emissive.set('#F5A524');
+    } else if (mode === 'error') {
+      mat.map = null;
+      mat.color.set('#FF5A5F');
+      mat.emissive.set('#FF5A5F');
+    } else if (mode === 'done') {
+      mat.map = null;
+      mat.color.copy(look).multiplyScalar(0.55);
+      mat.emissive.copy(look);
+    } else {
+      mat.map = null;
+      mat.color.set('#16181e');
+      mat.emissive.set('#000000');
+    }
+    mat.needsUpdate = true;
+  }
+  if (mode === 'working') mat.emissiveIntensity = 0.5 + Math.sin(time * 2.2 + phase) * 0.08;
+  else if (mode === 'waiting') mat.emissiveIntensity = 0.26;
+  else if (mode === 'error') mat.emissiveIntensity = 0.3;
+  else if (mode === 'done') mat.emissiveIntensity = 0.14;
+  else mat.emissiveIntensity = 0;
+}
+
+function addWorkChair(parent, mats, x, z) {
+  const seat = new THREE.Mesh(sharedPlantGeo('seat', () => new THREE.CylinderGeometry(0.16, 0.18, 0.16, 8)), mats.white);
+  seat.position.set(x, 0.12, z);
+  seat.castShadow = true;
+  seat.receiveShadow = true;
+  const back = box(0.34, 0.16, 0.05, mats.white);
+  back.position.set(x - 0.24, 0.28, z - 0.24);
+  back.rotation.y = Math.PI / 4;
+  parent.add(seat, back);
 }
 
 function addCurtain(parent, mats, width, height, x, z, rotY) {
@@ -145,21 +230,23 @@ function addCurtain(parent, mats, width, height, x, z, rotY) {
   parent.add(wall);
 }
 
-function addDeskRow(parent, mats, z) {
-  const top = box(8.8, 0.07, 1.05, mats.desk);
-  top.position.set(-0.2, 0.74, z);
-  parent.add(top);
-  for (const x of [-4.3, -0.2, 3.8]) {
-    const leg = box(0.07, 0.74, 0.07, mats.leg);
-    leg.position.set(x, 0.37, z);
-    parent.add(leg);
-  }
+function addDeskRow(parent, mats, z, opts = {}) {
+  const count = opts.count ?? 4;
+  const gap = opts.gap ?? 2.7;
+  const origin = opts.origin ?? -4.05;
+  const deskW = 1.22;
   const seats = [];
-  for (let i = 0; i < 4; i += 1) {
-    const x = -3.5 + i * 2.15;
-    const stool = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.42, 22), mats.white));
-    stool.position.set(x, 0.21, z - 1.35);
-    parent.add(stool);
+  for (let i = 0; i < count; i += 1) {
+    const x = origin + i * gap;
+    const top = box(deskW, 0.07, 1.05, mats.desk);
+    top.position.set(x, 0.74, z);
+    const legL = box(0.07, 0.74, 0.07, mats.leg);
+    legL.position.set(x - deskW * 0.38, 0.37, z);
+    const legR = box(0.07, 0.74, 0.07, mats.leg);
+    legR.position.set(x + deskW * 0.38, 0.37, z);
+    parent.add(top, legL, legR);
+    addWorkChair(parent, mats, x, z - 1.35);
+    addPlant(parent, mats, x + 0.4, z + 0.32, 0.32, false, 0.78);
     const base = box(0.46, 0.025, 0.3, mats.laptop, false);
     base.position.set(x, 0.79, z + 0.05);
     const screenMat = new THREE.MeshStandardMaterial({
@@ -172,6 +259,15 @@ function addDeskRow(parent, mats, z) {
     screen.position.set(x, 0.96, z - 0.32);
     screen.castShadow = false;
     parent.add(base, screen);
+    if (i % 2 === 0) {
+      const mug = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.045, 0.08, 10), mats.white), false);
+      mug.position.set(x + 0.28, 0.82, z + 0.22);
+      parent.add(mug);
+    } else {
+      const pad = box(0.22, 0.02, 0.16, mats.leg, false);
+      pad.position.set(x - 0.22, 0.8, z + 0.18);
+      parent.add(pad);
+    }
     seats.push({ x, z: z - 1.35, screenMat });
   }
   return seats;
@@ -225,25 +321,28 @@ function addTheme(parent, mats, theme) {
     const spout = box(0.08, 0.06, 0.1, mats.laptop, false);
     spout.position.set(5.35, 0.78, 3.38);
     parent.add(table, cup, cupB, counter, machine, spout);
+    addPlant(parent, mats, 6.05, 4.15, 0.7);
     return { x: 4.15, z: 1.85 };
   }
   if (theme === 'library') {
     addShelf(parent, mats, -5.15, -2.4, 0.15);
     addShelf(parent, mats, -5.15, -0.7, 0.15);
     addShelf(parent, mats, -3.55, -3.55, 0);
+    addPlant(parent, mats, -3.9, 4.35, 0.75);
     return { x: -3.4, z: 3.1 };
   }
   if (theme === 'meeting') {
-    const table = shade(new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 0.08, 32), mats.white));
-    table.scale.set(1.35, 1, 1);
-    table.position.set(3.9, 0.74, 2.7);
+    const table = shade(new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 0.08, 32), mats.white));
+    table.scale.set(1.2, 1, 1);
+    table.position.set(4.35, 0.74, 3.35);
     parent.add(table);
     for (let i = 0; i < 5; i += 1) {
-      const angle = (i / 5) * Math.PI * 2;
+      const angle = (i / 5) * Math.PI * 2 + 0.4;
       const stool = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.2, 0.42, 16), mats.white));
-      stool.position.set(3.9 + Math.cos(angle) * 1.7, 0.21, 2.7 + Math.sin(angle) * 1.15);
+      stool.position.set(4.35 + Math.cos(angle) * 1.32, 0.21, 3.35 + Math.sin(angle) * 0.78);
       parent.add(stool);
     }
+    addPlant(parent, mats, 5.7, 4.35, 0.8);
     return { x: -4.6, z: 3.2 };
   }
   if (theme === 'media') {
@@ -261,10 +360,12 @@ function addTheme(parent, mats, theme) {
     board.position.set(2.3, 1.35, -3.75);
     parent.add(stand, tv, board);
     addSofa(parent, mats, 0.2, -2.15, Math.PI);
+    addPlant(parent, mats, -1.6, -4.15, 0.7);
     return { x: 4.4, z: 3.2 };
   }
-  addPlant(parent, mats, 4.4, 3.2, 1.1);
-  return { x: 4.2, z: 3.3 };
+    addPlant(parent, mats, 4.4, 3.2, 1.1, true);
+    addPlant(parent, mats, -5.6, 0.4, 0.65);
+    return { x: 4.2, z: 3.3 };
 }
 
 export function createOffice(stage, hooks) {
@@ -322,6 +423,8 @@ export function createOffice(stage, hooks) {
     controls.enabled = !phone;
     controls.enableRotate = !phone;
     controls.enablePan = false;
+    controls.minZoom = phone ? 0.45 : 0.72;
+    controls.maxZoom = phone ? 3.4 : 2.6;
   }
   syncControls();
   phoneQuery.addEventListener('change', syncControls);
@@ -399,6 +502,7 @@ export function createOffice(stage, hooks) {
 
   let state = null;
   let builtSig = '';
+  let roomApis = [];
   let levels = [];
   let records = [];
   let pickables = [];
@@ -422,20 +526,52 @@ export function createOffice(stage, hooks) {
   function buildInterior(parent, floor) {
     addCurtain(parent, mats, W - 0.8, 2.7, 0, -D / 2 + 0.28, 0);
     addCurtain(parent, mats, D - 1.2, 2.7, W / 2 - 0.28, 0.2, Math.PI / 2);
-    addPlant(parent, mats, -5.3, 3.5, 1);
-    addPlant(parent, mats, 5.2, -2.6, 0.9);
+    const ops = floor.theme === 'lounge';
+    if (ops) addPlant(parent, mats, 0.15, 3.85, 0.8, true);
+    else addPlant(parent, mats, -5.3, 3.5, 1, true);
+    addPlant(parent, mats, 5.2, -2.6, 0.9, true);
     addPlant(parent, mats, -5.4, -3.4, 0.75);
-    const seats = [
-      ...addDeskRow(parent, mats, -0.55),
-      ...addDeskRow(parent, mats, 1.55),
-    ];
+    const corners = ops
+      ? [[5.65, 4.4, 0.85], [-5.8, -4.2, 0.8], [5.5, -4.35, 0.7], [1.4, 4.5, 0.65]]
+      : [[-5.75, 4.45, 0.9], [5.7, 4.4, 0.8], [-5.8, -4.25, 0.75], [5.55, -4.4, 0.7]];
+    corners.forEach(([x, z, scale], index) => addPlant(parent, mats, x, z, scale, index === 0));
+    addPlant(parent, mats, ops ? -2.2 : -2.5, -4.55, 0.62);
+    const seats = ops
+      ? [
+        ...addDeskRow(parent, mats, -1.45, { origin: -1.45, gap: 2.4, count: 4 }),
+        ...addDeskRow(parent, mats, 1.05, { origin: -1.45, gap: 2.4, count: 4 }),
+      ]
+      : [
+        ...addDeskRow(parent, mats, -0.55, { origin: -3.9, gap: 2.7, count: 4 }),
+        ...addDeskRow(parent, mats, 1.85, { origin: -3.9, gap: 2.7, count: 4 }),
+      ];
     const lounge = addTheme(parent, mats, floor.theme || 'open');
+    if (floor.theme !== 'meeting') {
+      const tableX = ops ? 1.6 : 2.15;
+      const tableZ = -4.05;
+      addMeetingTable(parent, mats, tableX, tableZ);
+      addPlant(parent, mats, tableX + 1.35, tableZ + 0.15, 0.7);
+    }
+    addWallArt(parent, mats);
+    const kaiOffice = ops ? addKaiOffice(parent, mats) : null;
+    if (kaiOffice) {
+      roomApis.push(kaiOffice);
+      kaiOffice.group.traverse((obj) => {
+        if (!obj.isMesh) return;
+        pickables.push(obj);
+      });
+    }
     let sleepers = 0;
+    let seatCursor = 0;
     floor.bots.forEach((name, index) => {
-      const look = resolveLook(name, state.looks[name]);
+      const look = lookFor(state, name);
       const visual = createCharacter(name, look);
-      const seat = seats[index % seats.length];
-      const seatPos = seats.length ? seat : { x: -1 + index, z: 0, screenMat: null };
+      const inOffice = name === 'Kai' && kaiOffice;
+      const seat = seats[seatCursor % Math.max(seats.length, 1)];
+      if (!inOffice) seatCursor += 1;
+      const seatPos = inOffice
+        ? { x: kaiOffice.desk.x, z: kaiOffice.desk.z, screenMat: null }
+        : (seats.length ? seat : { x: -1 + index, z: 0, screenMat: null });
       visual.root.position.set(seatPos.x, 0.46, seatPos.z);
       parent.add(visual.root);
       visual.pickRoot.traverse((obj) => {
@@ -449,15 +585,20 @@ export function createOffice(stage, hooks) {
         name,
         visual,
         seat: { x: seatPos.x, z: seatPos.z },
+        face: inOffice ? kaiOffice.deskFace : null,
         screenMat: seatPos.screenMat,
         lounge: { x: lounge.x - sleepIndex * 0.45, z: lounge.z },
         homeKey: floor.key,
         floorKey: floor.key,
+        office: inOffice ? kaiOffice : null,
+        nextBoard: 7,
       });
     });
   }
 
   function build(floors) {
+    roomApis.forEach((api) => api.dispose());
+    roomApis = [];
     disposeTree(building);
     building.clear();
     records = [];
@@ -497,7 +638,7 @@ export function createOffice(stage, hooks) {
     return floors.map((floor) => `${floor.key}:${floor.theme}:${floor.bots.join('\u0001')}`).join('|')
       + '#'
       + (state?.roster || []).map((name) => {
-        const look = resolveLook(name, state.looks[name]);
+        const look = lookFor(state, name);
         return `${look.shape}:${look.color}:${look.accessory}`;
       }).join(';');
   }
@@ -719,15 +860,7 @@ export function createOffice(stage, hooks) {
       prev.x = event.clientX;
       prev.y = event.clientY;
       if (dx || dy) down.moved = true;
-      if (pointers.size >= 2 && pinchDist > 0) {
-        const span = touchDistance();
-        camera.zoom = THREE.MathUtils.clamp(pinchZoom * (span / pinchDist), controls.minZoom, controls.maxZoom);
-        camera.updateProjectionMatrix();
-        userZoomed = true;
-        zoomAnim = null;
-      } else if (pointers.size === 1) {
-        panPixels(dx, dy);
-      }
+      if (pointers.size === 1 && pinchDist === 0) panPixels(dx, dy);
       return;
     }
     if (event.pointerType === 'touch') return;
@@ -736,6 +869,50 @@ export function createOffice(stage, hooks) {
       hovered = name;
       renderer.domElement.style.cursor = name ? 'pointer' : '';
     }
+  });
+  function touchSpan(touches) {
+    if (!touches || touches.length < 2) return 0;
+    return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+  }
+
+  function beginPinch(touches) {
+    const span = touchSpan(touches);
+    if (span <= 0) return;
+    pinchDist = span;
+    pinchZoom = camera.zoom;
+    userZoomed = true;
+    zoomAnim = null;
+    down.moved = true;
+  }
+
+  function applyPinch(touches) {
+    const span = touchSpan(touches);
+    if (pinchDist <= 0 || span <= 0) return;
+    camera.zoom = THREE.MathUtils.clamp(
+      pinchZoom * (span / pinchDist),
+      controls.minZoom,
+      controls.maxZoom,
+    );
+    camera.updateProjectionMatrix();
+    userZoomed = true;
+    zoomAnim = null;
+  }
+
+  renderer.domElement.addEventListener('touchstart', (event) => {
+    if (!phoneLayout() || event.touches.length < 2) return;
+    beginPinch(event.touches);
+  }, { passive: true });
+  renderer.domElement.addEventListener('touchmove', (event) => {
+    if (!phoneLayout() || event.touches.length < 2) return;
+    event.preventDefault();
+    if (pinchDist <= 0) beginPinch(event.touches);
+    applyPinch(event.touches);
+  }, { passive: false });
+  renderer.domElement.addEventListener('touchend', (event) => {
+    if (event.touches.length < 2) pinchDist = 0;
+  });
+  renderer.domElement.addEventListener('touchcancel', () => {
+    pinchDist = 0;
   });
   renderer.domElement.addEventListener('pointercancel', (event) => {
     pointers.delete(event.pointerId);
@@ -759,6 +936,10 @@ export function createOffice(stage, hooks) {
     camera.updateProjectionMatrix();
     renderer.setSize(width, height, false);
     labelRenderer.setSize(width, height);
+    const labels = labelRenderer.domElement;
+    labels.style.inset = 'auto';
+    labels.style.left = '0px';
+    labels.style.top = '0px';
     if (levels.length && !userZoomed) frameFloor();
   }
   const observer = new ResizeObserver(() => resize());
@@ -825,7 +1006,7 @@ export function createOffice(stage, hooks) {
     if (!record.trip && partner && record.finishedErrand !== errandKey) {
       record.trip = { phase: 'stand', since: elapsed, kind: 'bot', partnerName: partner.name, key: errandKey };
     }
-    if (!record.trip && !partner && presentation.status === 'idle' && record.homeKey === '__ops__' && elapsed > 24) {
+    if (!record.trip && !partner && !record.office && presentation.status === 'idle' && record.homeKey === '__ops__' && elapsed > 24) {
       const mates = records.filter((item) => item.homeKey === '__ops__');
       const index = mates.findIndex((item) => item.name === record.name);
       const period = 22;
@@ -834,8 +1015,32 @@ export function createOffice(stage, hooks) {
         record.trip = { phase: 'stand', since: elapsed, kind: 'coffee', key: `coffee-${Math.floor(elapsed)}` };
       }
     }
+    if (record.office) {
+      const idle = presentation.status === 'idle';
+      const spot = idle ? record.office.sofa : record.office.desk;
+      const face = idle ? record.office.sofaFace : record.office.deskFace;
+      record.seat.x = spot.x;
+      record.seat.z = spot.z;
+      record.face = face;
+      if (record.trip && record.trip.kind === 'board' && idle) record.trip = null;
+    }
+    if (!record.trip && record.office && presentation.status === 'working' && !partner && elapsed > record.nextBoard) {
+      record.trip = { phase: 'out', since: elapsed, kind: 'board', key: `board-${Math.floor(elapsed)}` };
+      record.nextBoard = elapsed + 16;
+    }
     if (!record.trip) {
       if (record.floorKey !== record.homeKey) attachFloor(record, record.homeKey);
+      if (record.office) {
+        const dist = Math.hypot(
+          record.visual.root.position.x - record.seat.x,
+          record.visual.root.position.z - record.seat.z,
+        );
+        return {
+          visit: { x: record.seat.x, z: record.seat.z, faceX: record.face.x, faceZ: record.face.z },
+          gait: dist > 0.2 ? 'walk' : 'sit',
+          nod: 0,
+        };
+      }
       return { visit: null, gait: 'sit', nod: 0 };
     }
     const trip = record.trip;
@@ -866,6 +1071,25 @@ export function createOffice(stage, hooks) {
       if (trip.phase === 'back') {
         if (record.floorKey !== record.homeKey) attachFloor(record, record.homeKey);
         if (Math.hypot(record.visual.root.position.x - record.seat.x, record.visual.root.position.z - record.seat.z) < 0.12) next('sit');
+        return { visit: null, gait: 'walk', nod: 0 };
+      }
+    } else if (trip.kind === 'board' && record.office) {
+      const spot = {
+        x: record.office.boardSpot.x,
+        z: record.office.boardSpot.z,
+        faceX: record.office.boardFace.x,
+        faceZ: record.office.boardFace.z,
+      };
+      if (trip.phase === 'out') {
+        if (Math.hypot(record.visual.root.position.x - spot.x, record.visual.root.position.z - spot.z) < 0.16) next('pause');
+        return { visit: spot, gait: 'walk', nod: 0 };
+      }
+      if (trip.phase === 'pause') {
+        if (age >= 1.3) next('back');
+        return { visit: spot, gait: 'stand', nod: Math.min(age / 0.7, 1) };
+      }
+      if (trip.phase === 'back') {
+        if (Math.hypot(record.visual.root.position.x - record.seat.x, record.visual.root.position.z - record.seat.z) < 0.16) next('sit');
         return { visit: null, gait: 'walk', nod: 0 };
       }
     } else if (trip.phase === 'stand') {
@@ -945,6 +1169,10 @@ export function createOffice(stage, hooks) {
     }
     if (!phoneLayout()) controls.update();
 
+    for (const api of roomApis) api.update(state, now);
+    const lines = screenLines();
+    lines.offset.y = (elapsed * 0.07) % 1;
+
     for (const record of records) {
       const level = levels.find((item) => item.key === record.floorKey);
       const shown = level && level.interior.visible;
@@ -962,6 +1190,7 @@ export function createOffice(stage, hooks) {
         visit: plan.visit,
         gait: plan.gait,
         nod: plan.nod,
+        face: record.face,
         showStep: selected === record.name,
         showName: hovered === record.name || selected === record.name,
         step: presentation.step,
@@ -971,12 +1200,8 @@ export function createOffice(stage, hooks) {
         hold: !!motion || dragging,
       });
       const screen = record.screenMat;
-      if (screen) {
-        const working = presentation.status === 'working';
-        screen.emissive.set(working ? '#38bdf8' : '#0f172a');
-        screen.emissiveIntensity = working ? 0.55 + Math.sin(elapsed * 4 + record.visual.phase) * 0.2 : 0.2;
-        screen.color.set(working ? '#e0f2fe' : '#334155');
-      }
+      if (screen) paintScreen(screen, presentation.status, record.visual.bodyMat.color, elapsed, record.visual.phase);
+      if (record.office) record.office.paintScreens(presentation.status, record.visual.bodyMat.color, elapsed, record.visual.phase);
     }
     ring.visible = false;
 
@@ -985,6 +1210,7 @@ export function createOffice(stage, hooks) {
     renderer.render(scene, camera);
     labelRenderer.render(scene, camera);
     if (frames === 1) document.body.dataset.ready = '1';
+    document.body.dataset.zoom = camera.zoom.toFixed(3);
   }
 
   renderer.setAnimationLoop(loop);

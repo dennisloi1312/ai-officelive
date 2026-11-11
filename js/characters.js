@@ -1,31 +1,28 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { el } from './dom.js';
-import { hashName } from './state.js';
+import { defaultLook, hashName } from './state.js';
 
 const geos = new Map();
 let segments = null;
 
-const LOGOS = [
-  { kind: 'sphere', color: '#9B6BF0' },
-  { kind: 'pill', color: '#2EC4B6' },
-  { kind: 'sphere', color: '#3DDC6A' },
-  { kind: 'pill', color: '#F5A24A' },
-  { kind: 'triangle', color: '#A67C52' },
-  { kind: 'drop', color: '#C9A6E8' },
-  { kind: 'sphere', color: '#FF4D9A' },
-];
-
-const NAMED = {
-  Kai: 0,
-  Momo: 1,
-  Jun: 2,
-  Sol: 3,
-  Ren: 4,
-  小墨: 5,
-  Pixel: 6,
-};
+const KINDS = new Set([
+  'sphere',
+  'rounded_cube',
+  'pill',
+  'triangle',
+  'cone',
+  'pentagon',
+  'hexagon',
+  'star4',
+  'star6',
+  'clover',
+  'rounded_square',
+  'trio',
+  'drop',
+]);
 
 const STATUS_RING = {
   working: '#34C759',
@@ -53,13 +50,96 @@ function sharedGeo(key, build) {
   return geometry;
 }
 
-function logoFor(name) {
-  if (Object.prototype.hasOwnProperty.call(NAMED, name)) return LOGOS[NAMED[name]];
-  return LOGOS[hashName(name) % LOGOS.length];
+function lookOf(name, look) {
+  const fallback = defaultLook(name);
+  const shape = look && KINDS.has(look.shape) ? look.shape : fallback.shape;
+  const raw = look && typeof look.color === 'string' ? look.color.trim() : '';
+  const color = /^#[0-9a-fA-F]{6}$/.test(raw) ? raw.toUpperCase() : fallback.color;
+  return { shape, color };
 }
 
 function lathe(key, profile) {
   return sharedGeo(key, () => new THREE.LatheGeometry(profile, seg()));
+}
+
+function polygonShape(sides, radius) {
+  const shape = new THREE.Shape();
+  for (let i = 0; i < sides; i += 1) {
+    const angle = -Math.PI / 2 + (i / sides) * Math.PI * 2;
+    const x = Math.cos(angle) * radius;
+    const y = Math.sin(angle) * radius;
+    if (i === 0) shape.moveTo(x, y);
+    else shape.lineTo(x, y);
+  }
+  shape.closePath();
+  return shape;
+}
+
+function roundedRectShape(w, h, r) {
+  const shape = new THREE.Shape();
+  const x = -w / 2;
+  const y = -h / 2;
+  shape.moveTo(x + r, y);
+  shape.lineTo(x + w - r, y);
+  shape.quadraticCurveTo(x + w, y, x + w, y + r);
+  shape.lineTo(x + w, y + h - r);
+  shape.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  shape.lineTo(x + r, y + h);
+  shape.quadraticCurveTo(x, y + h, x, y + h - r);
+  shape.lineTo(x, y + r);
+  shape.quadraticCurveTo(x, y, x + r, y);
+  return shape;
+}
+
+function starShape(points, outer, inner) {
+  const shape = new THREE.Shape();
+  const n = points * 2;
+  for (let i = 0; i < n; i += 1) {
+    const angle = -Math.PI / 2 + (i / n) * Math.PI * 2;
+    const radius = i % 2 === 0 ? outer : inner;
+    const x = Math.cos(angle) * radius;
+    const y = Math.sin(angle) * radius;
+    if (i === 0) shape.moveTo(x, y);
+    else shape.lineTo(x, y);
+  }
+  shape.closePath();
+  return shape;
+}
+
+function extrude(key, shape, depth = 0.36) {
+  return sharedGeo(key, () => {
+    const geo = new THREE.ExtrudeGeometry(shape, {
+      depth,
+      bevelEnabled: true,
+      bevelThickness: 0.04,
+      bevelSize: 0.035,
+      bevelSegments: 2,
+      curveSegments: 5,
+    });
+    geo.translate(0, 0, -depth / 2);
+    return geo;
+  });
+}
+
+function blobCluster(key, count, radius, spread) {
+  return sharedGeo(key, () => {
+    const s = seg();
+    const unit = new THREE.SphereGeometry(radius, Math.max(12, s / 2), Math.max(10, s / 2));
+    const parts = [];
+    for (let i = 0; i < count; i += 1) {
+      const angle = (i / count) * Math.PI * 2 + Math.PI / count;
+      const clone = unit.clone();
+      clone.translate(Math.cos(angle) * spread, Math.sin(angle) * spread, 0);
+      parts.push(clone);
+    }
+    const center = unit.clone();
+    center.scale(0.82, 0.82, 1.2);
+    parts.push(center);
+    const geometry = mergeGeometries(parts, false);
+    parts.forEach((part) => part.dispose());
+    unit.dispose();
+    return geometry;
+  });
 }
 
 function headGeometry(kind) {
@@ -83,7 +163,7 @@ function headGeometry(kind) {
     }
     return lathe('triangle', pts);
   }
-  if (kind === 'drop') {
+  if (kind === 'drop' || kind === 'star6') {
     const pts = [];
     const n = 24;
     for (let i = 0; i <= n; i += 1) {
@@ -92,15 +172,36 @@ function headGeometry(kind) {
       const r = 0.3 * Math.sin(Math.PI * Math.max(0, t) ** 0.78) * (1 - t * 0.08);
       pts.push(new THREE.Vector2(Math.max(0.015, Number.isFinite(r) ? r : 0.015), y));
     }
-    return lathe('drop', pts);
+    return lathe(kind === 'star6' ? 'star6' : 'drop', pts);
   }
+  if (kind === 'cone') {
+    return sharedGeo('cone', () => {
+      const geo = new THREE.ConeGeometry(0.34, 0.62, s);
+      geo.translate(0, 0.02, 0);
+      return geo;
+    });
+  }
+  if (kind === 'hexagon') return extrude('hexagon', polygonShape(6, 0.36));
+  if (kind === 'pentagon') return extrude('pentagon', polygonShape(5, 0.38));
+  if (kind === 'rounded_square') return extrude('rounded-square', roundedRectShape(0.64, 0.64, 0.14));
+  if (kind === 'rounded_cube') {
+    return sharedGeo('rounded-cube', () => new RoundedBoxGeometry(0.58, 0.58, 0.46, 2, 0.1));
+  }
+  if (kind === 'star4') return extrude('star4', starShape(4, 0.4, 0.18));
+  if (kind === 'clover') return blobCluster('clover', 4, 0.17, 0.15);
+  if (kind === 'trio') return blobCluster('trio', 3, 0.16, 0.14);
   return sharedGeo('sphere', () => new THREE.SphereGeometry(0.34, s, Math.max(16, s - 8)));
 }
 
-function footOf(kind) {
-  if (kind === 'pill') return 0.25;
-  if (kind === 'triangle' || kind === 'drop') return 0.3;
-  return 0.34;
+function profileOf(kind) {
+  if (kind === 'pill') return { foot: 0.25, eyeZ: 0.24, eyeY: 0.04 };
+  if (kind === 'triangle') return { foot: 0.3, eyeZ: 0.22, eyeY: 0.05 };
+  if (kind === 'drop' || kind === 'star6') return { foot: 0.3, eyeZ: 0.22, eyeY: 0.02 };
+  if (kind === 'cone') return { foot: 0.32, eyeZ: 0.2, eyeY: 0.08 };
+  if (kind === 'clover' || kind === 'trio') return { foot: 0.32, eyeZ: 0.22, eyeY: 0.04 };
+  if (kind === 'rounded_cube') return { foot: 0.29, eyeZ: 0.26, eyeY: 0.04 };
+  if (kind === 'sphere') return { foot: 0.34, eyeZ: 0.3, eyeY: 0.04 };
+  return { foot: 0.34, eyeZ: 0.22, eyeY: 0.03 };
 }
 
 const EYE_TILT = -0.42;
@@ -109,8 +210,9 @@ function damp(current, target, lambda, dt) {
   return current + (target - current) * (1 - Math.exp(-lambda * dt));
 }
 
-export function createCharacter(name) {
-  const logo = logoFor(name);
+export function createCharacter(name, look) {
+  const logo = lookOf(name, look);
+  const face = profileOf(logo.shape);
   const s = seg();
   const material = new THREE.MeshPhysicalMaterial({
     color: logo.color,
@@ -123,20 +225,18 @@ export function createCharacter(name) {
   const pose = new THREE.Group();
   root.add(pose);
 
-  const head = new THREE.Mesh(headGeometry(logo.kind), material);
-  if (logo.kind === 'triangle') head.rotation.z = -0.18;
+  const head = new THREE.Mesh(headGeometry(logo.shape), material);
+  if (logo.shape === 'triangle') head.rotation.z = -0.18;
   head.castShadow = true;
   pose.add(head);
 
   const eyeGeo = sharedGeo('eye', () => new THREE.CapsuleGeometry(0.034, 0.062, 4, Math.max(8, s / 2)));
   const eyeMat = new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false });
-  const eyes = new THREE.Mesh(sharedGeo(`eyes-${logo.kind}`, () => {
-    const z = logo.kind === 'sphere' ? 0.3 : 0.24;
-    const y = logo.kind === 'drop' ? 0.02 : 0.04;
+  const eyes = new THREE.Mesh(sharedGeo(`eyes-${logo.shape}`, () => {
     const parts = [-0.075, 0.075].map((x) => {
       const clone = eyeGeo.clone();
       clone.applyMatrix4(new THREE.Matrix4().compose(
-        new THREE.Vector3(x, y, z),
+        new THREE.Vector3(x, face.eyeY, face.eyeZ),
         new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, EYE_TILT)),
         new THREE.Vector3(1, 1, 1),
       ));
@@ -169,10 +269,18 @@ export function createCharacter(name) {
   halo.rotation.x = -Math.PI / 2;
   halo.position.y = -1;
   halo.visible = false;
-  root.add(ring, halo);
+  halo.material.color.set(logo.color);
+  const mark = new THREE.Mesh(
+    sharedGeo('id-ring', () => new THREE.RingGeometry(0.24, 0.32, s === 20 ? 28 : 40)),
+    new THREE.MeshBasicMaterial({ color: logo.color, side: THREE.DoubleSide, toneMapped: false }),
+  );
+  mark.rotation.x = -Math.PI / 2;
+  mark.position.y = -1;
+  root.add(ring, mark, halo);
 
   const nameEl = el('div', 'name-label');
   nameEl.dir = 'auto';
+  nameEl.style.setProperty('--bot', logo.color);
   const nameDot = el('span', 'status-dot');
   nameEl.append(nameDot, el('span', 'name-text', name));
   const nameTag = new CSS2DObject(nameEl);
@@ -198,29 +306,20 @@ export function createCharacter(name) {
   doneTag.visible = false;
   root.add(doneTag);
 
-  const sleepEl = el('div', 'bubble sleep');
-  sleepEl.style.color = '#8E8E93';
-  ['z', 'z', 'Z'].forEach((glyph, index) => {
-    const letter = el('span', `z z${index + 1}`, glyph);
-    letter.style.color = '#8E8E93';
-    sleepEl.appendChild(letter);
-  });
-  const sleepTag = new CSS2DObject(sleepEl);
-  sleepTag.visible = false;
-  root.add(sleepTag);
-
   root.traverse((obj) => {
     if (obj.isCSS2DObject) obj.raycast = () => {};
   });
 
-  const foot = footOf(logo.kind);
+  const foot = face.foot;
   return {
     root,
     pose,
     pickRoot: pose,
     bodyMat: material,
+    kind: logo.shape,
     smile: eyes,
     ring,
+    mark,
     halo,
     nameTag,
     nameDot,
@@ -229,7 +328,6 @@ export function createCharacter(name) {
     alertTag,
     errorTag,
     doneTag,
-    sleepTag,
     stepShown: '',
     foot,
     phase: (hashName(name) % 628) / 100,
@@ -249,7 +347,7 @@ export function updateCharacter(visual, ctx) {
   const gait = ctx.gait || 'sit';
   const sitting = gait === 'sit';
   const walking = gait === 'walk';
-  const sitY = 0.42 + visual.foot * 0.18;
+  const sitY = 0.52 + visual.foot * 0.1;
   const walkY = visual.foot;
 
   if (!motion.ready) {
@@ -278,7 +376,8 @@ export function updateCharacter(visual, ctx) {
       motion.z = goalZ;
     }
     motion.moving = false;
-    if (visit) yaw = Math.atan2(visit.faceX - motion.x, visit.faceZ - motion.z);
+    if (visit && visit.faceX != null) yaw = Math.atan2(visit.faceX - motion.x, visit.faceZ - motion.z);
+    else if (ctx.face) yaw = Math.atan2(ctx.face.x - motion.x, ctx.face.z - motion.z);
   }
 
   visual.root.position.x = motion.x;
@@ -318,8 +417,10 @@ export function updateCharacter(visual, ctx) {
   const selected = !!ctx.selected;
   const floorY = 0.03 - visual.root.position.y;
   visual.ring.position.y = floorY;
+  visual.mark.position.y = floorY + 0.004;
   visual.halo.position.y = floorY - 0.004;
   visual.ring.rotation.set(-Math.PI / 2, 0, 0);
+  visual.mark.rotation.set(-Math.PI / 2, 0, 0);
   visual.halo.rotation.set(-Math.PI / 2, 0, 0);
   visual.ring.visible = ringOn;
   visual.halo.visible = ringOn && selected;
@@ -331,24 +432,29 @@ export function updateCharacter(visual, ctx) {
   }
 
   const alertOn = status === 'waiting_user';
+  const crownY = visual.foot * 0.92;
+  const crownZ = visual.foot * 0.42;
+  visual.alertTag.center.set(0.5, 1);
   visual.alertTag.visible = alertOn;
   const hop = alertOn && !hold && (t % 2) < 0.35 ? Math.sin(((t % 2) / 0.35) * Math.PI) * 0.06 : 0;
-  visual.alertTag.position.set(0.02, visual.foot + 0.28 + hop, 0);
+  visual.alertTag.position.set(0, crownY + hop, crownZ);
+  visual.errorTag.center.set(0.5, 1);
   visual.errorTag.visible = status === 'error';
-  visual.errorTag.position.set(0.02, visual.foot + 0.28, 0);
+  visual.errorTag.position.set(0, crownY, crownZ);
+  visual.doneTag.center.set(0.5, 1);
   visual.doneTag.visible = status === 'done';
-  visual.doneTag.position.set(0.02, visual.foot + 0.28, 0);
+  visual.doneTag.position.set(0, crownY, crownZ);
   const step = ctx.showStep ? String(ctx.step || '').slice(0, 80) : '';
   if (visual.stepShown !== step) {
     visual.stepEl.textContent = step;
     visual.stepShown = step;
   }
+  visual.stepTag.center.set(0.5, 1);
   visual.stepTag.visible = Boolean(step);
-  visual.stepTag.position.set(0, visual.foot + 0.46, 0);
-  visual.sleepTag.visible = resting && sitting && !motion.moving;
-  visual.sleepTag.position.set(0.16, visual.foot + 0.32, 0);
+  visual.stepTag.position.set(0, crownY + 0.02, crownZ);
+  visual.nameTag.center.set(0.5, 1);
   visual.nameTag.visible = !!ctx.showName;
-  visual.nameTag.position.set(0, visual.foot + 0.38, 0);
+  visual.nameTag.position.set(0, crownY, crownZ);
   const tone = status === 'waiting_user' ? 'waiting' : status;
   visual.nameDot.className = `status-dot dot-${tone}`;
 }
