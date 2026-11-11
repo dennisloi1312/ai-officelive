@@ -209,6 +209,54 @@ function addWorkChair(parent, mats, x, z) {
   parent.add(seat, back);
 }
 
+function addPinkDesk(parent, mats) {
+  const x = -0.85;
+  const z = 3.35;
+  const top = box(1.28, 0.07, 0.74, mats.desk, true);
+  top.position.set(x, 0.74, z);
+  const legA = box(0.06, 0.7, 0.06, mats.leg);
+  legA.position.set(x - 0.5, 0.36, z - 0.26);
+  const legB = box(0.06, 0.7, 0.06, mats.leg);
+  legB.position.set(x + 0.5, 0.36, z + 0.26);
+  parent.add(top, legA, legB);
+  addWorkChair(parent, mats, x, z - 1.05);
+
+  const screenMat = new THREE.MeshStandardMaterial({
+    color: '#16181e',
+    emissive: '#000000',
+    emissiveIntensity: 0,
+    roughness: 0.48,
+  });
+  const tablet = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.025, 0.34), screenMat);
+  tablet.position.set(x - 0.08, 0.82, z - 0.02);
+  tablet.rotation.x = -0.4;
+  tablet.rotation.y = -0.25;
+  tablet.castShadow = false;
+  const pen = box(0.18, 0.015, 0.025, mats.leg, false);
+  pen.position.set(x + 0.28, 0.8, z + 0.12);
+  pen.rotation.y = 0.7;
+  parent.add(tablet, pen);
+
+  ['#FF8FC8', '#F93498', '#F5A524', '#1E86FC', '#8F59F9'].forEach((color, index) => {
+    const chipMat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
+    const chip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.015, 0.09), chipMat);
+    chip.position.set(x - 0.42 + index * 0.1, 0.8, z + 0.26);
+    chip.castShadow = false;
+    parent.add(chip);
+  });
+
+  const board = box(0.62, 0.78, 0.04, mats.white);
+  board.position.set(x - 1.05, 1.02, z - 0.95);
+  parent.add(board);
+  ['#FF8FC8', '#F7F6F3', '#1E86FC', '#F5A524'].forEach((color, index) => {
+    const cardMat = new THREE.MeshStandardMaterial({ color, roughness: 0.55 });
+    const card = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.14, 0.012), cardMat);
+    card.position.set(x - 1.02, 1.16 - Math.floor(index / 2) * 0.26, z - 0.78 - (index % 2) * 0.24);
+    parent.add(card);
+  });
+  return { x, z: z - 1.05, screenMat };
+}
+
 function addCurtain(parent, mats, width, height, x, z, rotY) {
   const wall = new THREE.Group();
   const pane = new THREE.Mesh(new THREE.PlaneGeometry(width, height), mats.glass);
@@ -527,12 +575,12 @@ export function createOffice(stage, hooks) {
     addCurtain(parent, mats, W - 0.8, 2.7, 0, -D / 2 + 0.28, 0);
     addCurtain(parent, mats, D - 1.2, 2.7, W / 2 - 0.28, 0.2, Math.PI / 2);
     const ops = floor.theme === 'lounge';
-    if (ops) addPlant(parent, mats, 0.15, 3.85, 0.8, true);
+    if (ops) addPlant(parent, mats, 2.35, 4.5, 0.75, true);
     else addPlant(parent, mats, -5.3, 3.5, 1, true);
     addPlant(parent, mats, 5.2, -2.6, 0.9, true);
     addPlant(parent, mats, -5.4, -3.4, 0.75);
     const corners = ops
-      ? [[5.65, 4.4, 0.85], [-5.8, -4.2, 0.8], [5.5, -4.35, 0.7], [1.4, 4.5, 0.65]]
+      ? [[5.65, 4.4, 0.85], [-5.8, -4.2, 0.8], [5.5, -4.35, 0.7]]
       : [[-5.75, 4.45, 0.9], [5.7, 4.4, 0.8], [-5.8, -4.25, 0.75], [5.55, -4.4, 0.7]];
     corners.forEach(([x, z, scale], index) => addPlant(parent, mats, x, z, scale, index === 0));
     addPlant(parent, mats, ops ? -2.2 : -2.5, -4.55, 0.62);
@@ -554,6 +602,7 @@ export function createOffice(stage, hooks) {
     }
     addWallArt(parent, mats);
     const kaiOffice = ops ? addKaiOffice(parent, mats) : null;
+    const pinkDesk = ops && floor.bots.includes('Pink') ? addPinkDesk(parent, mats) : null;
     if (kaiOffice) {
       roomApis.push(kaiOffice);
       kaiOffice.group.traverse((obj) => {
@@ -567,11 +616,14 @@ export function createOffice(stage, hooks) {
       const look = lookFor(state, name);
       const visual = createCharacter(name, look);
       const inOffice = name === 'Kai' && kaiOffice;
+      const atPink = name === 'Pink' && pinkDesk;
       const seat = seats[seatCursor % Math.max(seats.length, 1)];
-      if (!inOffice) seatCursor += 1;
+      if (!inOffice && !atPink) seatCursor += 1;
       const seatPos = inOffice
         ? { x: kaiOffice.desk.x, z: kaiOffice.desk.z, screenMat: null }
-        : (seats.length ? seat : { x: -1 + index, z: 0, screenMat: null });
+        : atPink
+          ? pinkDesk
+          : (seats.length ? seat : { x: -1 + index, z: 0, screenMat: null });
       visual.root.position.set(seatPos.x, 0.46, seatPos.z);
       parent.add(visual.root);
       visual.pickRoot.traverse((obj) => {
