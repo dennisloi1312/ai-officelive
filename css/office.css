@@ -775,14 +775,6 @@ body:has(#banner:not([hidden])) #left { top: 156px; }
 }
 .bubble.bad { color: #1C1C20; background: var(--error); font-weight: 700; }
 .bubble.done-mark { color: #1C1C20; background: var(--done); font-weight: 700; }
-.bubble.sleep,
-.bubble.sleep .z {
-  background: transparent;
-  border: 0;
-  box-shadow: none;
-  color: #8E8E93;
-  font-weight: 700;
-}
 
 .sr-only {
   position: absolute;

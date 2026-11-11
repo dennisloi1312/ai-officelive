@@ -148,11 +148,19 @@ function addCurtain(parent, mats, width, height, x, z, rotY) {
 
 function addDeskRow(parent, mats, z, opts = {}) {
   const count = opts.count ?? 4;
-  const gap = opts.gap ?? 2.15;
-  const origin = opts.origin ?? -3.5;
+  const gap = opts.gap ?? 2.7;
+  const origin = opts.origin ?? -4.05;
+  const deskW = 1.22;
   const seats = [];
   for (let i = 0; i < count; i += 1) {
     const x = origin + i * gap;
+    const top = box(deskW, 0.07, 1.05, mats.desk);
+    top.position.set(x, 0.74, z);
+    const legL = box(0.07, 0.74, 0.07, mats.leg);
+    legL.position.set(x - deskW * 0.38, 0.37, z);
+    const legR = box(0.07, 0.74, 0.07, mats.leg);
+    legR.position.set(x + deskW * 0.38, 0.37, z);
+    parent.add(top, legL, legR);
     const stool = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.42, 22), mats.white));
     stool.position.set(x, 0.21, z - 1.35);
     parent.add(stool);
@@ -178,16 +186,6 @@ function addDeskRow(parent, mats, z, opts = {}) {
       parent.add(pad);
     }
     seats.push({ x, z: z - 1.35, screenMat });
-  }
-  const x0 = origin - 0.85;
-  const x1 = origin + (count - 1) * gap + 0.85;
-  const top = box(x1 - x0, 0.07, 1.05, mats.desk);
-  top.position.set((x0 + x1) / 2, 0.74, z);
-  parent.add(top);
-  for (const x of [x0 + 0.15, (x0 + x1) / 2, x1 - 0.15]) {
-    const leg = box(0.07, 0.74, 0.07, mats.leg);
-    leg.position.set(x, 0.37, z);
-    parent.add(leg);
   }
   return seats;
 }
@@ -249,14 +247,14 @@ function addTheme(parent, mats, theme) {
     return { x: -3.4, z: 3.1 };
   }
   if (theme === 'meeting') {
-    const table = shade(new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 0.08, 32), mats.white));
-    table.scale.set(1.35, 1, 1);
-    table.position.set(3.9, 0.74, 2.7);
+    const table = shade(new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 0.08, 32), mats.white));
+    table.scale.set(1.2, 1, 1);
+    table.position.set(4.35, 0.74, 3.35);
     parent.add(table);
     for (let i = 0; i < 5; i += 1) {
-      const angle = (i / 5) * Math.PI * 2;
+      const angle = (i / 5) * Math.PI * 2 + 0.4;
       const stool = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.2, 0.42, 16), mats.white));
-      stool.position.set(3.9 + Math.cos(angle) * 1.7, 0.21, 2.7 + Math.sin(angle) * 1.15);
+      stool.position.set(4.35 + Math.cos(angle) * 1.32, 0.21, 3.35 + Math.sin(angle) * 0.78);
       parent.add(stool);
     }
     return { x: -4.6, z: 3.2 };
@@ -447,12 +445,12 @@ export function createOffice(stage, hooks) {
     addPlant(parent, mats, -5.4, -3.4, 0.75);
     const seats = ops
       ? [
-        ...addDeskRow(parent, mats, -1.15, { origin: -0.2, gap: 1.75, count: 4 }),
-        ...addDeskRow(parent, mats, 0.55, { origin: -0.2, gap: 1.75, count: 4 }),
+        ...addDeskRow(parent, mats, -1.45, { origin: -1.45, gap: 2.4, count: 4 }),
+        ...addDeskRow(parent, mats, 1.05, { origin: -1.45, gap: 2.4, count: 4 }),
       ]
       : [
-        ...addDeskRow(parent, mats, -0.55),
-        ...addDeskRow(parent, mats, 1.55),
+        ...addDeskRow(parent, mats, -0.55, { origin: -3.9, gap: 2.7, count: 4 }),
+        ...addDeskRow(parent, mats, 1.85, { origin: -3.9, gap: 2.7, count: 4 }),
       ];
     const lounge = addTheme(parent, mats, floor.theme || 'open');
     if (floor.theme !== 'meeting') addMeetingTable(parent, mats, ops ? 1.6 : 2.15, -4.05);

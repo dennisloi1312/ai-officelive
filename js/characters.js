@@ -306,17 +306,6 @@ export function createCharacter(name, look) {
   doneTag.visible = false;
   root.add(doneTag);
 
-  const sleepEl = el('div', 'bubble sleep');
-  sleepEl.style.color = '#8E8E93';
-  ['z', 'z', 'Z'].forEach((glyph, index) => {
-    const letter = el('span', `z z${index + 1}`, glyph);
-    letter.style.color = '#8E8E93';
-    sleepEl.appendChild(letter);
-  });
-  const sleepTag = new CSS2DObject(sleepEl);
-  sleepTag.visible = false;
-  root.add(sleepTag);
-
   root.traverse((obj) => {
     if (obj.isCSS2DObject) obj.raycast = () => {};
   });
@@ -339,7 +328,6 @@ export function createCharacter(name, look) {
     alertTag,
     errorTag,
     doneTag,
-    sleepTag,
     stepShown: '',
     foot,
     phase: (hashName(name) % 628) / 100,
@@ -464,9 +452,6 @@ export function updateCharacter(visual, ctx) {
   visual.stepTag.center.set(0.5, 1);
   visual.stepTag.visible = Boolean(step);
   visual.stepTag.position.set(0, crownY + 0.02, crownZ);
-  visual.sleepTag.center.set(0.5, 1);
-  visual.sleepTag.visible = resting && sitting && !motion.moving;
-  visual.sleepTag.position.set(0, crownY, crownZ);
   visual.nameTag.center.set(0.5, 1);
   visual.nameTag.visible = !!ctx.showName;
   visual.nameTag.position.set(0, crownY, crownZ);
