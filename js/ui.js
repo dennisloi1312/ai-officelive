@@ -90,6 +90,11 @@ export function mountUI(hooks) {
       drawerToggle.setAttribute('aria-expanded', opened ? 'true' : 'false');
       drawerToggle.setAttribute('aria-label', opened ? 'Hide panels' : 'Panels');
     });
+    if (window.matchMedia('(max-width: 640px)').matches) {
+      drawer.classList.add('is-open');
+      drawerToggle.setAttribute('aria-expanded', 'true');
+      drawerToggle.setAttribute('aria-label', 'Hide panels');
+    }
   }
   const backdrop = document.getElementById('backdrop');
   if (backdrop) backdrop.addEventListener('click', () => hooks.onClose());
@@ -345,13 +350,7 @@ export function mountUI(hooks) {
     }
   }
 
-  function renderRight(floors, people, now) {
-    right.replaceChildren();
-    const floor = floors[view.floorIndex] || floors[0];
-    if (!floor) {
-      right.appendChild(el('p', 'empty', 'No floors yet.'));
-      return;
-    }
+  function renderFloorCard(floor, people) {
     const cardWrap = el('section', 'glass floor-card');
     const head = el('header', 'floor-head');
     head.style.background = themeColor(floor.theme);
@@ -371,7 +370,18 @@ export function mountUI(hooks) {
     if (!here.length) list.appendChild(el('p', 'empty', 'This floor is empty.'));
     here.forEach((item) => list.appendChild(botButton(item, view.selected)));
     cardWrap.append(head, list);
-    right.appendChild(cardWrap);
+    return cardWrap;
+  }
+
+  function renderRight(floors, people, now) {
+    right.replaceChildren();
+    const compact = window.matchMedia('(max-width: 640px)').matches;
+    const shown = compact ? floors : [floors[view.floorIndex] || floors[0]].filter(Boolean);
+    if (!shown.length) {
+      right.appendChild(el('p', 'empty', 'No floors yet.'));
+      return;
+    }
+    shown.forEach((floor) => right.appendChild(renderFloorCard(floor, people)));
     void now;
   }
 

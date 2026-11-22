@@ -4,18 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; media-src 'none'; img-src 'self'; font-src 'none'; style-src 'self'; connect-src https://ntfy.sh; script-src 'self' https://cdn.jsdelivr.net 'sha256-/neONZNSzp6tDn0DeJDcFsXd9UFJ1+WL9YDmzBCOsTE='">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; media-src 'none'; img-src 'self'; font-src 'none'; style-src 'self'; connect-src https://ntfy.sh; script-src 'self'">
   <title>AI Office</title>
-  <meta name="description" content="A live isometric office where your AI assistant bots work, one floor at a time.">
+  <meta name="description" content="A live top-down pixel-art office where your AI assistant bots work.">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="css/office.css">
 </head>
 <body>
-  <p class="sr-only" id="app-desc">Isometric office. Choose a floor, then a bot. Drag to orbit, scroll or pinch to zoom. Times use this device’s clock.</p>
+  <p class="sr-only" id="app-desc">Top-down pixel office. Drag to pan, scroll or pinch to zoom, then choose a bot. Times use this device’s clock.</p>
   <p id="live" class="sr-only" aria-live="polite"></p>
   <div id="stage" class="stage">
     <div class="vignette" aria-hidden="true"></div>
-    <p id="fatal" class="fatal" hidden>This browser could not start the 3D view.</p>
+    <p id="fatal" class="fatal" hidden>This browser could not start the office view.</p>
   </div>
   <header class="top">
     <div class="pill brand">
@@ -53,7 +53,6 @@
   <button id="backdrop" class="backdrop" type="button" hidden aria-label="Close details"></button>
   <article id="bot-card" class="bot-card" hidden></article>
   <noscript><p class="noscript">JavaScript is required to show the office.</p></noscript>
-  <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/"}}</script>
   <script type="module" src="js/main.js"></script>
 </body>
 </html>
