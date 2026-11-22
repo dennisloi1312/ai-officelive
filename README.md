@@ -1,8 +1,8 @@
 # AI Office
 
-A static, live 3D office for GitHub Pages. One team floor is open at a time; the others stay stacked as shells. Bots are glossy toy characters that sit, walk, type, and hop from messages posted to an [ntfy.sh](https://ntfy.sh) topic.
+A static, live top-down pixel-art office for GitHub Pages. Research, Web Dev, Ops, and Design each have a room on one floor, joined by a corridor and a break room. Bots are pixel characters that sit at their desks. They walk the corridor only when a working or waiting update names another bot. Messages come from an [ntfy.sh](https://ntfy.sh) topic.
 
-There is no build step. Pages serves this repository as-is. The page loads [three.js](https://github.com/mrdoob/three.js) (MIT) as ES modules from jsDelivr and talks to **no host except `ntfy.sh`**.
+There is no build step. Pages serves this repository as-is. The page talks to **no host except `ntfy.sh`**.
 
 ## Watch a live office
 
@@ -44,7 +44,7 @@ Live status. `status` is `working`, `idle`, `waiting_user`, `error`, or `done`. 
 {"bot":"Kai","status":"working","step":"Sorting the morning queue"}
 ```
 
-`working` sits at a desk and types while the screen glows. `idle` wanders, relaxes, or sleeps (a Z floats up). `waiting_user` raises a hand with a `!` bubble. `error` slumps under a red `×`. `done` hops with a sparkle, then settles into idle. A bot left on `working` with no new message for 20 minutes fades to idle.
+`working` sits at a desk and types while the screen glows. `idle` stays at that desk. Some resting bots sleep there, with a Z above the chair. `waiting_user` shows a `!`. `error` shows a red `×`. `done` shows a check, then settles into idle. A bot left on `working` with no new message for 20 minutes fades to idle. A bot walks out through the doorway only while `working` or `waiting_user` and the step names another bot on the roster; it then walks back. Idle bots do not wander, and the break room stays empty.
 
 Optional routines and usage panels appear only after one of these arrives:
 
@@ -70,7 +70,7 @@ curl -fsS --data-binary '{"bot":"Kai","status":"working","step":"Sorting the mor
 
 ## Use the page
 
-Choose a floor in the list. The open floor eases into place over about 700ms; use − / + or scroll to zoom, and drag to orbit. Tap a bot for a detail card with its status, how long it has been in that status, and its latest step. The same list is in the page, outside the 3D view. Sound is off until you turn it on. The topic in the hash is never shown. The last view of a topic is cached in `localStorage` on this device so the room can appear before the network answers. Known teams are Ops, Research, Web Dev, and Design; each has its own corner of the floor.
+Drag to pan. Use − / +, scroll, or a pinch to zoom. Choosing a floor frames that team’s rooms. Tap a bot for a detail card with its status, how long it has been in that status, and its latest step. The same list is in the page, outside the map. On a phone the team summary stays under the map. Sound is off until you turn it on. The topic in the hash is never shown. The last view of a topic is cached in `localStorage` on this device so the room can appear before the network answers. Known teams are Ops, Research, Web Dev, and Design; each has its own room. Motion follows the device’s reduced-motion setting.
 
 ## Enable GitHub Pages
 
@@ -88,21 +88,19 @@ Then open `http://127.0.0.1:8080/`.
 
 ## Privacy
 
-The Content-Security-Policy on the page allows scripts from this site and `https://cdn.jsdelivr.net`, and connections only to `https://ntfy.sh`. Referrers are not sent. There is no analytics, no tracking pixel, and no third-party font download.
+The Content-Security-Policy on the page allows scripts from this site only, and connections only to `https://ntfy.sh`. Referrers are not sent. There is no analytics, no tracking pixel, and no third-party font download.
 
 ## License
 
 MIT © 2026 Loi Fai Lim. See [LICENSE](LICENSE).
 
-three.js is © The three.js Authors and is used under the MIT license from jsDelivr. It is not vendored in this repository.
-
 ---
 
 # AI Office（繁體中文）
 
-這是一個給 GitHub Pages 用的靜態、即時 3D 辦公室。一次打開一個團隊的樓層，其他樓層收成外殼疊在下面。機器人是光滑的玩具角色，會依你貼到 [ntfy.sh](https://ntfy.sh) 主題的訊息坐下、走動、打字或跳一下。
+這是一個給 GitHub Pages 用的靜態、即時俯視像素辦公室。研究、網站開發、營運、設計各有一間房間，中間是走道和茶水間。機器人是像素角色，平常坐在自己的位子。只有在「工作中」或「等待用戶」、而且 step 寫到另一位機器人的名字時，才會沿走道走過去再走回來。訊息來自 [ntfy.sh](https://ntfy.sh) 主題。
 
-不需要建置。Pages 直接提供這個儲存庫的檔案。頁面以 ES module 從 jsDelivr 載入 [three.js](https://github.com/mrdoob/three.js)（MIT），**除了 `ntfy.sh` 之外不連任何主機**。
+不需要建置。Pages 直接提供這個儲存庫的檔案。**除了 `ntfy.sh` 之外不連任何主機**。
 
 ## 看即時辦公室
 
@@ -144,7 +142,7 @@ https://dennisloi1312.github.io/ai-officelive/#你的主題
 {"bot":"Kai","status":"working","step":"Sorting the morning queue"}
 ```
 
-`working` 坐在桌前打字，螢幕會亮。`idle` 會閒逛、放鬆，或睡覺（飄出一個 Z）。`waiting_user` 舉手並顯示 `!`。`error` 垂下身子，旁邊是紅色 `×`。`done` 會開心跳一下並灑出星光，然後回到 idle。若 `working` 超過 20 分鐘沒有新訊息，會淡出成 idle。
+`working` 坐在桌前打字，螢幕會亮。`idle` 留在座位；部分休息中的機器人會在位子上睡覺，頭頂有 Z。`waiting_user` 顯示 `!`。`error` 顯示紅色 `×`。`done` 顯示勾，然後回到 idle。若 `working` 超過 20 分鐘沒有新訊息，會淡出成 idle。只有狀態是 `working` 或 `waiting_user`，而且 step 點名了名單上的另一位機器人，才會走出門口；走完會回到座位。閒置不會自己亂走，茶水間也不會自己出現人。
 
 收到下面其中一種訊息時，側欄才會出現例行工作或用量；沒收到就隱藏：
 
@@ -170,7 +168,7 @@ curl -fsS --data-binary '{"bot":"Kai","status":"working","step":"Sorting the mor
 
 ## 怎麼操作
 
-在清單裡選樓層，打開的那一層會在大約 700 毫秒內移到最上面。用 − / +、滾輪或雙指縮放，拖曳可以環繞。點一個機器人會打開詳情卡，裡面有狀態、持續時間和最新的 step。同一份清單也在 3D 畫面外面，讀屏可以用。音效預設關閉。網址 hash 裡的主題不會顯示在畫面上。已知的團隊是 Ops、Research、Web Dev、Design，各自有不同的樓層角落。某個主題最後一次的狀態會存在這台裝置的 `localStorage`，網路回應之前房間就能先出現。
+拖曳可以平移。用 − / +、滾輪或雙指縮放。在清單裡選樓層，會把畫面移到那個團隊的房間。點一個機器人會打開詳情卡，裡面有狀態、持續時間和最新的 step。同一份清單也在地圖外面，讀屏可以用。手機上，團隊摘要留在地圖下方。音效預設關閉。網址 hash 裡的主題不會顯示在畫面上。已知的團隊是 Ops、Research、Web Dev、Design，各自有自己的房間。動畫會跟著裝置的「減少動態」設定。某個主題最後一次的狀態會存在這台裝置的 `localStorage`，網路回應之前房間就能先出現。
 
 ## 啟用 GitHub Pages
 
@@ -188,10 +186,8 @@ python3 -m http.server 8080
 
 ## 隱私
 
-頁面上的 Content-Security-Policy 只允許這個網站和 `https://cdn.jsdelivr.net` 的指令碼，連線只允許 `https://ntfy.sh`。不送出 referrer。沒有分析、沒有追蹤圖、也不會下載第三方字型。
+頁面上的 Content-Security-Policy 只允許這個網站的指令碼，連線只允許 `https://ntfy.sh`。不送出 referrer。沒有分析、沒有追蹤圖、也不會下載第三方字型。
 
 ## 授權
 
 MIT © 2026 Loi Fai Lim。見 [LICENSE](LICENSE)。
-
-three.js © The three.js Authors，依 MIT 授權從 jsDelivr 載入，沒有把原始碼放進這個儲存庫。

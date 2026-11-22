@@ -1,1300 +1,911 @@
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
-import { createCharacter, updateCharacter } from './characters.js';
-import { addKaiOffice, addMeetingTable, addWallArt } from './rooms.js';
-import { DONE_MS, floorPlan, lookFor, presentBot, visualMode } from './state.js';
+/** Top-down pixel office. Idle bots stay at their desks. */
 
-const W = 13.5;
-const D = 10.2;
-const BASE = 0.62;
-const ROOM = 3.25;
-const SLAB = BASE;
-const OPEN = BASE + ROOM;
+import { el } from './dom.js';
+import {
+  BUILDING,
+  DOORS,
+  FLOORS,
+  FURNITURE,
+  SIGNS,
+  WALLS,
+  WORLD,
+  assignSeats,
+  boundsOf,
+  buildNav,
+  findPath,
+  teamRoom,
+  visibleDesks,
+} from './layout.js';
+import { advanceAgent, createAgent, namedPartner } from './motion.js';
+import { floorPlan, hashName, lookFor, presentBot } from './state.js';
 
-function damp(current, target, lambda, dt) {
-  return current + (target - current) * (1 - Math.exp(-lambda * dt));
+const STATUS_COLOR = {
+  working: '#34C759',
+  waiting_user: '#F5A524',
+  error: '#FF5A5F',
+  done: '#5AA9FF',
+  idle: '#9AA0A6',
+};
+
+const STATUS_WORD = {
+  working: 'Working',
+  waiting_user: 'Waiting',
+  error: 'Error',
+  done: 'Done',
+  idle: 'Resting',
+};
+
+const SHAPES = {
+  sphere: ['  ###  ', ' ##### ', '#######', '#######', ' ##### ', '  ###  '],
+  rounded_cube: [' ##### ', '#######', '#######', '#######', '#######', ' ##### '],
+  rounded_square: ['#######', '#######', '#######', '#######', '#######', '#######'],
+  pill: ['  ###  ', ' ##### ', ' ##### ', ' ##### ', ' ##### ', '  ###  '],
+  triangle: ['   #   ', '  ###  ', '  ###  ', ' ##### ', '#######', '#######'],
+  cone: ['   #   ', '  ###  ', '  ###  ', ' ##### ', ' ##### ', '#######'],
+  pentagon: ['  ###  ', ' ##### ', '#######', '#######', ' ##### ', '  ###  '],
+  hexagon: ['  ###  ', ' ##### ', '#######', '#######', ' ##### ', '  ###  '],
+  star4: ['   #   ', '  ###  ', '#######', '  ###  ', ' # # # ', '##   ##'],
+  star6: [' # # # ', '#######', ' ##### ', '#######', ' # # # ', '  # #  '],
+  clover: [' ## ## ', '#######', '#######', ' ##### ', '#######', '##   ##'],
+  trio: [' ## ## ', '#######', ' ##### ', '#######', ' ##### ', '  ###  '],
+};
+
+const PLANTS = [
+  [188, 24], [24, 108], [438, 24], [438, 104],
+  [24, 292], [188, 292], [438, 292], [196, 344], [270, 344],
+];
+
+function shapeOf(kind) {
+  return SHAPES[kind] || SHAPES.sphere;
 }
 
-/** cubic-bezier(0.65, 0, 0.35, 1), the floor-change curve. */
-function easeInOut(t) {
-  const x1 = 0.65;
-  const y1 = 0;
-  const x2 = 0.35;
-  const y2 = 1;
-  const cx = 3 * x1;
-  const bx = 3 * (x2 - x1) - cx;
-  const ax = 1 - cx - bx;
-  const cy = 3 * y1;
-  const by = 3 * (y2 - y1) - cy;
-  const ay = 1 - cy - by;
-  const sampleX = (u) => ((ax * u + bx) * u + cx) * u;
-  const sampleY = (u) => ((ay * u + by) * u + cy) * u;
-  const sampleDX = (u) => (3 * ax * u + 2 * bx) * u + cx;
-  let u = t;
-  for (let i = 0; i < 6; i += 1) {
-    const dx = sampleDX(u);
-    if (Math.abs(dx) < 1e-5) break;
-    u -= (sampleX(u) - t) / dx;
-  }
-  return sampleY(Math.min(1, Math.max(0, u)));
-}
-
-function shade(mesh, cast = true) {
-  mesh.castShadow = cast;
-  mesh.receiveShadow = true;
-  return mesh;
-}
-
-function box(w, h, d, material, cast = true) {
-  return shade(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material), cast);
-}
-
-function disposeTree(root) {
-  const geometries = new Set();
-  const materials = new Set();
-  root.traverse((obj) => {
-    if (obj.element && obj.element.remove) obj.element.remove();
-    if (obj.geometry && !obj.geometry.userData?.shared) geometries.add(obj.geometry);
-    const list = obj.material == null ? [] : (Array.isArray(obj.material) ? obj.material : [obj.material]);
-    for (const material of list) {
-      if (!material.userData?.shared) materials.add(material);
+function blit(ctx, mask, cx, cy, color, outline = '#142018') {
+  const h = mask.length;
+  const w = mask[0].length;
+  const x0 = Math.round(cx - w / 2);
+  const y0 = Math.round(cy - h / 2);
+  ctx.fillStyle = outline;
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      if (mask[y][x] !== '#') continue;
+      ctx.fillRect(x0 + x + 1, y0 + y + 1, 1, 1);
     }
-  });
-  for (const geometry of geometries) geometry.dispose();
-  for (const material of materials) material.dispose();
-}
-
-function makeMaterials() {
-  const std = (color, roughness = 0.72) => {
-    const material = new THREE.MeshStandardMaterial({ color, roughness, metalness: 0.02 });
-    material.userData.shared = true;
-    return material;
-  };
-  const glass = new THREE.MeshStandardMaterial({
-    color: '#e7eef6',
-    roughness: 0.08,
-    metalness: 0.02,
-    transparent: true,
-    opacity: 0.22,
-    depthWrite: false,
-  });
-  glass.userData.shared = true;
-  glass.side = THREE.DoubleSide;
-  const hairline = new THREE.LineBasicMaterial({ color: '#000000', transparent: true, opacity: 0.12 });
-  hairline.userData.shared = true;
-  const   band = new THREE.MeshStandardMaterial({
-    color: '#2B2B2E',
-    roughness: 0.35,
-    metalness: 0.18,
-  });
-  band.userData.shared = true;
-  return {
-    shell: std('#FAFAF8', 0.78),
-    floor: std('#EDEDEA', 0.84),
-    band,
-    white: std('#FAFAF8', 0.7),
-    desk: std('#EFE7D6', 0.62),
-    sofa: std('#F7F6F3', 0.72),
-    leg: std('#E7E4DE', 0.55),
-    mullion: std('#FAFAF8', 0.4),
-    laptop: std('#2B2B2E', 0.42),
-    glass,
-    hairline,
-    leaf: std('#6FAE4F', 0.55),
-    leafDark: std('#4F8F3A', 0.5),
-    ground: std('#E6E6E3', 0.96),
-    books: ['#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#14b8a6'].map((color) => std(color, 0.6)),
-  };
-}
-
-const plantKit = {};
-
-function sharedPlantGeo(key, build) {
-  if (!plantKit[key]) {
-    const geometry = build();
-    geometry.userData.shared = true;
-    plantKit[key] = geometry;
   }
-  return plantKit[key];
-}
-
-function addPlant(parent, mats, x, z, scale = 1, cast = false, y = 0) {
-  const group = new THREE.Group();
-  const pot = new THREE.Mesh(sharedPlantGeo('pot', () => new THREE.CylinderGeometry(0.16, 0.12, 0.15, 7)), mats.desk);
-  const lip = new THREE.Mesh(sharedPlantGeo('lip', () => new THREE.CylinderGeometry(0.18, 0.16, 0.04, 7)), mats.white);
-  const stem = new THREE.Mesh(sharedPlantGeo('stem', () => new THREE.CylinderGeometry(0.02, 0.028, 0.14, 5)), mats.leg);
-  const crown = new THREE.Mesh(sharedPlantGeo('leaf', () => new THREE.SphereGeometry(0.13, 7, 5)), mats.leaf);
-  const bud = new THREE.Mesh(sharedPlantGeo('bud', () => new THREE.SphereGeometry(0.07, 6, 4)), mats.leafDark);
-  pot.position.y = 0.075;
-  lip.position.y = 0.15;
-  stem.position.y = 0.24;
-  crown.position.y = 0.36;
-  bud.position.set(0.08, 0.32, 0.04);
-  group.add(pot, lip, stem, crown, bud);
-  group.traverse((obj) => {
-    if (!obj.isMesh) return;
-    obj.castShadow = cast;
-    obj.receiveShadow = cast;
-  });
-  group.scale.setScalar(scale);
-  group.position.set(x, y, z);
-  parent.add(group);
-}
-
-let lineTex = null;
-
-function screenLines() {
-  if (lineTex) return lineTex;
-  const canvas = document.createElement('canvas');
-  canvas.width = 32;
-  canvas.height = 32;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#f7f9fc';
-  ctx.fillRect(0, 0, 32, 32);
-  ctx.fillStyle = 'rgba(18, 22, 32, 0.28)';
-  for (let y = 2; y < 32; y += 6) ctx.fillRect(0, y, 32, 2);
-  lineTex = new THREE.CanvasTexture(canvas);
-  lineTex.wrapS = THREE.RepeatWrapping;
-  lineTex.wrapT = THREE.RepeatWrapping;
-  lineTex.colorSpace = THREE.SRGBColorSpace;
-  return lineTex;
-}
-
-function paintScreen(mat, status, look, time, phase) {
-  const mode = status === 'working' ? 'working'
-    : status === 'waiting_user' ? 'waiting'
-    : status === 'error' ? 'error'
-    : status === 'done' ? 'done' : 'idle';
-  if (mat.userData.mode !== mode) {
-    mat.userData.mode = mode;
-    if (mode === 'working') {
-      mat.map = screenLines();
-      mat.color.copy(look);
-      mat.emissive.copy(look);
-    } else if (mode === 'waiting') {
-      mat.map = null;
-      mat.color.set('#F5A524');
-      mat.emissive.set('#F5A524');
-    } else if (mode === 'error') {
-      mat.map = null;
-      mat.color.set('#FF5A5F');
-      mat.emissive.set('#FF5A5F');
-    } else if (mode === 'done') {
-      mat.map = null;
-      mat.color.copy(look).multiplyScalar(0.55);
-      mat.emissive.copy(look);
-    } else {
-      mat.map = null;
-      mat.color.set('#16181e');
-      mat.emissive.set('#000000');
+  ctx.fillStyle = color;
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      if (mask[y][x] === '#') ctx.fillRect(x0 + x, y0 + y, 1, 1);
     }
-    mat.needsUpdate = true;
   }
-  if (mode === 'working') mat.emissiveIntensity = 0.5 + Math.sin(time * 2.2 + phase) * 0.08;
-  else if (mode === 'waiting') mat.emissiveIntensity = 0.26;
-  else if (mode === 'error') mat.emissiveIntensity = 0.3;
-  else if (mode === 'done') mat.emissiveIntensity = 0.14;
-  else mat.emissiveIntensity = 0;
+  return { x: x0, y: y0, w, h };
 }
 
-function addWorkChair(parent, mats, x, z) {
-  const seat = new THREE.Mesh(sharedPlantGeo('seat', () => new THREE.CylinderGeometry(0.16, 0.18, 0.16, 8)), mats.white);
-  seat.position.set(x, 0.12, z);
-  seat.castShadow = true;
-  seat.receiveShadow = true;
-  const back = box(0.34, 0.16, 0.05, mats.white);
-  back.position.set(x - 0.24, 0.28, z - 0.24);
-  back.rotation.y = Math.PI / 4;
-  parent.add(seat, back);
-}
-
-function addPinkDesk(parent, mats) {
-  const x = -0.85;
-  const z = 3.35;
-  const top = box(1.28, 0.07, 0.74, mats.desk, true);
-  top.position.set(x, 0.74, z);
-  const legA = box(0.06, 0.7, 0.06, mats.leg);
-  legA.position.set(x - 0.5, 0.36, z - 0.26);
-  const legB = box(0.06, 0.7, 0.06, mats.leg);
-  legB.position.set(x + 0.5, 0.36, z + 0.26);
-  parent.add(top, legA, legB);
-  addWorkChair(parent, mats, x, z - 1.05);
-
-  const screenMat = new THREE.MeshStandardMaterial({
-    color: '#16181e',
-    emissive: '#000000',
-    emissiveIntensity: 0,
-    roughness: 0.48,
-  });
-  const tablet = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.025, 0.34), screenMat);
-  tablet.position.set(x - 0.08, 0.82, z - 0.02);
-  tablet.rotation.x = -0.4;
-  tablet.rotation.y = -0.25;
-  tablet.castShadow = false;
-  const pen = box(0.18, 0.015, 0.025, mats.leg, false);
-  pen.position.set(x + 0.28, 0.8, z + 0.12);
-  pen.rotation.y = 0.7;
-  parent.add(tablet, pen);
-
-  ['#FF8FC8', '#F93498', '#F5A524', '#1E86FC', '#8F59F9'].forEach((color, index) => {
-    const chipMat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
-    const chip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.015, 0.09), chipMat);
-    chip.position.set(x - 0.42 + index * 0.1, 0.8, z + 0.26);
-    chip.castShadow = false;
-    parent.add(chip);
-  });
-
-  const board = box(0.62, 0.78, 0.04, mats.white);
-  board.position.set(x - 1.05, 1.02, z - 0.95);
-  parent.add(board);
-  ['#FF8FC8', '#F7F6F3', '#1E86FC', '#F5A524'].forEach((color, index) => {
-    const cardMat = new THREE.MeshStandardMaterial({ color, roughness: 0.55 });
-    const card = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.14, 0.012), cardMat);
-    card.position.set(x - 1.02, 1.16 - Math.floor(index / 2) * 0.26, z - 0.78 - (index % 2) * 0.24);
-    parent.add(card);
-  });
-  return { x, z: z - 1.05, screenMat };
-}
-
-function addCurtain(parent, mats, width, height, x, z, rotY) {
-  const wall = new THREE.Group();
-  const pane = new THREE.Mesh(new THREE.PlaneGeometry(width, height), mats.glass);
-  pane.position.y = height / 2;
-  const points = [];
-  const cols = Math.max(2, Math.round(width / 2.4));
-  for (let i = 0; i <= cols; i += 1) {
-    const px = -width / 2 + (i * width) / cols;
-    points.push(px, 0, 0, px, height, 0);
-  }
-  points.push(-width / 2, height * 0.55, 0, width / 2, height * 0.55, 0);
-  const lines = new THREE.LineSegments(
-    new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(points, 3)),
-    mats.hairline,
-  );
-  wall.add(pane, lines);
-  wall.position.set(x, 0, z);
-  wall.rotation.y = rotY;
-  parent.add(wall);
-}
-
-function addDeskRow(parent, mats, z, opts = {}) {
-  const count = opts.count ?? 4;
-  const gap = opts.gap ?? 2.7;
-  const origin = opts.origin ?? -4.05;
-  const deskW = 1.22;
-  const seats = [];
-  for (let i = 0; i < count; i += 1) {
-    const x = origin + i * gap;
-    const top = box(deskW, 0.07, 1.05, mats.desk);
-    top.position.set(x, 0.74, z);
-    const legL = box(0.07, 0.74, 0.07, mats.leg);
-    legL.position.set(x - deskW * 0.38, 0.37, z);
-    const legR = box(0.07, 0.74, 0.07, mats.leg);
-    legR.position.set(x + deskW * 0.38, 0.37, z);
-    parent.add(top, legL, legR);
-    addWorkChair(parent, mats, x, z - 1.35);
-    addPlant(parent, mats, x + 0.4, z + 0.32, 0.32, false, 0.78);
-    const base = box(0.46, 0.025, 0.3, mats.laptop, false);
-    base.position.set(x, 0.79, z + 0.05);
-    const screenMat = new THREE.MeshStandardMaterial({
-      color: '#334155',
-      emissive: '#0f172a',
-      emissiveIntensity: 0.35,
-      roughness: 0.45,
-    });
-    const screen = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.24, 0.02), screenMat);
-    screen.position.set(x, 0.96, z - 0.32);
-    screen.castShadow = false;
-    parent.add(base, screen);
-    if (i % 2 === 0) {
-      const mug = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.045, 0.08, 10), mats.white), false);
-      mug.position.set(x + 0.28, 0.82, z + 0.22);
-      parent.add(mug);
-    } else {
-      const pad = box(0.22, 0.02, 0.16, mats.leg, false);
-      pad.position.set(x - 0.22, 0.8, z + 0.18);
-      parent.add(pad);
+function checker(ctx, rect, a, b, size = 8) {
+  for (let y = 0; y < rect.h; y += size) {
+    for (let x = 0; x < rect.w; x += size) {
+      const tx = rect.x + x;
+      const ty = rect.y + y;
+      ctx.fillStyle = ((Math.floor(tx / size) + Math.floor(ty / size)) % 2) === 0 ? a : b;
+      ctx.fillRect(tx, ty, Math.min(size, rect.w - x), Math.min(size, rect.h - y));
     }
-    seats.push({ x, z: z - 1.35, screenMat });
   }
-  return seats;
 }
 
-function addSofa(parent, mats, x, z, rot) {
-  const group = new THREE.Group();
-  const seat = box(1.55, 0.28, 0.62, mats.sofa);
-  seat.position.y = 0.24;
-  const back = box(1.55, 0.46, 0.14, mats.sofa);
-  back.position.set(0, 0.52, -0.24);
-  const armL = box(0.12, 0.32, 0.62, mats.sofa);
-  armL.position.set(-0.78, 0.36, 0);
-  const armR = box(0.12, 0.32, 0.62, mats.sofa);
-  armR.position.set(0.78, 0.36, 0);
-  group.add(seat, back, armL, armR);
-  group.position.set(x, 0, z);
-  group.rotation.y = rot || 0;
-  parent.add(group);
+function ring(ctx, cx, cy, radius, color) {
+  ctx.fillStyle = color;
+  const steps = 20;
+  for (let i = 0; i < steps; i += 1) {
+    const angle = (i / steps) * Math.PI * 2;
+    ctx.fillRect(Math.round(cx + Math.cos(angle) * radius), Math.round(cy + Math.sin(angle) * radius), 2, 2);
+  }
 }
 
-function addShelf(parent, mats, x, z, rot) {
-  const group = new THREE.Group();
-  const frame = box(1.15, 1.55, 0.28, mats.white);
-  frame.position.y = 0.78;
-  group.add(frame);
-  mats.books.forEach((material, index) => {
-    const book = box(0.18, 0.34, 0.16, material, false);
-    book.position.set(-0.38 + (index % 4) * 0.25, 0.32 + Math.floor(index / 4) * 0.48, 0.1);
-    group.add(book);
-  });
-  group.position.set(x, 0, z);
-  group.rotation.y = rot || 0;
-  parent.add(group);
+function drawPlant(ctx, x, y) {
+  ctx.fillStyle = '#8D643C';
+  ctx.fillRect(x + 3, y + 8, 6, 4);
+  ctx.fillStyle = '#6B4424';
+  ctx.fillRect(x + 2, y + 7, 8, 2);
+  ctx.fillStyle = '#2F8A3E';
+  ctx.fillRect(x + 2, y + 3, 8, 5);
+  ctx.fillStyle = '#3EAF4E';
+  ctx.fillRect(x + 4, y + 1, 4, 4);
+  ctx.fillStyle = '#1E6B30';
+  ctx.fillRect(x + 1, y + 4, 3, 3);
 }
 
-function addTheme(parent, mats, theme) {
-  if (theme === 'lounge') {
-    addSofa(parent, mats, 3.6, 3.15, 0.4);
-    addSofa(parent, mats, 5.05, 2.15, -1.1);
-    const table = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.08, 24), mats.white));
-    table.position.set(4.35, 0.36, 2.55);
-    const cup = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.1, 12), mats.leg), false);
-    cup.position.set(4.22, 0.45, 2.48);
-    const cupB = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.09, 12), mats.white), false);
-    cupB.position.set(4.5, 0.44, 2.66);
-    const counter = box(0.62, 0.72, 0.38, mats.white);
-    counter.position.set(5.35, 0.36, 3.55);
-    const machine = box(0.28, 0.34, 0.22, mats.shell);
-    machine.position.set(5.35, 0.89, 3.52);
-    const spout = box(0.08, 0.06, 0.1, mats.laptop, false);
-    spout.position.set(5.35, 0.78, 3.38);
-    parent.add(table, cup, cupB, counter, machine, spout);
-    addPlant(parent, mats, 6.05, 4.15, 0.7);
-    return { x: 4.15, z: 1.85 };
+function drawDesk(ctx, desk, screen, time, typing) {
+  ctx.fillStyle = 'rgba(20, 30, 20, 0.25)';
+  ctx.fillRect(desk.deskX + 2, desk.deskY + 3, desk.deskW, desk.deskH);
+  ctx.fillStyle = '#6B4423';
+  ctx.fillRect(desk.deskX, desk.deskY, desk.deskW, desk.deskH);
+  ctx.fillStyle = '#A56B38';
+  ctx.fillRect(desk.deskX, desk.deskY, desk.deskW, 4);
+  ctx.fillStyle = '#C48A52';
+  ctx.fillRect(desk.deskX + 1, desk.deskY + 1, desk.deskW - 2, 2);
+  const mx = desk.deskX + Math.round(desk.deskW / 2) - 6;
+  const my = desk.deskY + 2;
+  ctx.fillStyle = '#1C2822';
+  ctx.fillRect(mx, my, 12, 8);
+  ctx.fillStyle = screen;
+  ctx.fillRect(mx + 1, my + 1, 10, 6);
+  if (typing) {
+    const scan = Math.floor(time * 3) % 5;
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.fillRect(mx + 1, my + 1 + scan, 10, 1);
   }
-  if (theme === 'library') {
-    addShelf(parent, mats, -5.15, -2.4, 0.15);
-    addShelf(parent, mats, -5.15, -0.7, 0.15);
-    addShelf(parent, mats, -3.55, -3.55, 0);
-    addPlant(parent, mats, -3.9, 4.35, 0.75);
-    return { x: -3.4, z: 3.1 };
-  }
-  if (theme === 'meeting') {
-    const table = shade(new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 0.08, 32), mats.white));
-    table.scale.set(1.2, 1, 1);
-    table.position.set(4.35, 0.74, 3.35);
-    parent.add(table);
-    for (let i = 0; i < 5; i += 1) {
-      const angle = (i / 5) * Math.PI * 2 + 0.4;
-      const stool = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.2, 0.42, 16), mats.white));
-      stool.position.set(4.35 + Math.cos(angle) * 1.32, 0.21, 3.35 + Math.sin(angle) * 0.78);
-      parent.add(stool);
+  ctx.fillStyle = '#3A322C';
+  ctx.fillRect(desk.deskX + 10, desk.deskY + desk.deskH - 4, 12, 2);
+}
+
+function drawChair(ctx, x, y) {
+  ctx.fillStyle = '#5A4030';
+  ctx.fillRect(x - 5, y - 2, 10, 6);
+  ctx.fillStyle = '#8B6848';
+  ctx.fillRect(x - 4, y - 3, 8, 4);
+}
+
+function drawShelf(ctx, rect) {
+  ctx.fillStyle = '#6B4A2E';
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  const colors = ['#3B6FD6', '#E0A23A', '#D4534A', '#6B4BB5', '#2F9E8F'];
+  for (let row = 0; row < 4; row += 1) {
+    for (let col = 0; col < 4; col += 1) {
+      ctx.fillStyle = colors[(row + col) % colors.length];
+      ctx.fillRect(rect.x + 2, rect.y + 3 + row * 11 + col, 8, 7);
     }
-    addPlant(parent, mats, 5.7, 4.35, 0.8);
-    return { x: -4.6, z: 3.2 };
   }
-  if (theme === 'media') {
-    const stand = box(0.7, 0.5, 0.35, mats.white);
-    stand.position.set(0.2, 0.25, -3.55);
-    const tvMat = new THREE.MeshStandardMaterial({
-      color: '#0f172a',
-      emissive: '#1d4ed8',
-      emissiveIntensity: 0.35,
-      roughness: 0.35,
-    });
-    const tv = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.88, 0.06), tvMat);
-    tv.position.set(0.2, 1.25, -3.7);
-    const board = box(1.3, 0.8, 0.04, mats.floor, false);
-    board.position.set(2.3, 1.35, -3.75);
-    parent.add(stand, tv, board);
-    addSofa(parent, mats, 0.2, -2.15, Math.PI);
-    addPlant(parent, mats, -1.6, -4.15, 0.7);
-    return { x: 4.4, z: 3.2 };
+}
+
+function drawBoard(ctx, rect) {
+  ctx.fillStyle = '#8D928A';
+  ctx.fillRect(rect.x - 1, rect.y - 1, rect.w + 2, rect.h + 2);
+  ctx.fillStyle = '#F7F4EC';
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  ctx.fillStyle = '#D9D4C8';
+  ctx.fillRect(rect.x + 4, rect.y + 2, rect.w - 8, 1);
+}
+
+function drawCounter(ctx, rect) {
+  ctx.fillStyle = '#8D643C';
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  ctx.fillStyle = '#C4A574';
+  ctx.fillRect(rect.x, rect.y, rect.w, 5);
+  ctx.fillStyle = '#3A322C';
+  ctx.fillRect(rect.x + 4, rect.y + 6, 8, 8);
+  ctx.fillStyle = '#F2E4CC';
+  ctx.fillRect(rect.x + 16, rect.y + 7, 5, 4);
+  ctx.fillStyle = '#E07A6A';
+  ctx.fillRect(rect.x + 24, rect.y + 7, 5, 4);
+  ctx.fillStyle = '#5C4634';
+  ctx.fillRect(rect.x + 6, rect.y + rect.h - 2, 4, 6);
+  ctx.fillRect(rect.x + 28, rect.y + rect.h - 2, 4, 6);
+}
+
+function drawSwatch(ctx, rect) {
+  const colors = ['#F26D8A', '#F5A524', '#34C759', '#5AA9FF', '#C9A6E8', '#1C1C20'];
+  colors.forEach((color, index) => {
+    ctx.fillStyle = color;
+    ctx.fillRect(rect.x, rect.y + index * 9, rect.w, 8);
+  });
+}
+
+function drawBot(ctx, actor, time, reduce) {
+  const color = STATUS_COLOR[actor.status] || STATUS_COLOR.idle;
+  ring(ctx, actor.x, actor.y, actor.selected ? 9 : 8, actor.selected ? '#FFFFFF' : color);
+  if (actor.selected) ring(ctx, actor.x, actor.y, 11, color);
+  const bob = actor.walking && !reduce ? Math.sin(time * 10 + actor.phase) * 1 : 0;
+  const mask = shapeOf(actor.look.shape);
+  const body = blit(ctx, mask, actor.x + bob, actor.y, actor.look.color);
+  const eyeY = body.y + 2;
+  const eyeX = body.x + Math.round(body.w / 2);
+  const ox = actor.face === 'e' ? 1 : actor.face === 'w' ? -1 : 0;
+  const oy = actor.face === 's' ? 1 : 0;
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(eyeX - 3 + ox, eyeY + oy, 2, 2);
+  ctx.fillRect(eyeX + 1 + ox, eyeY + oy, 2, 2);
+  ctx.fillStyle = '#1A1A1A';
+  ctx.fillRect(eyeX - 2 + ox, eyeY + 1 + oy, 1, 1);
+  ctx.fillRect(eyeX + 2 + ox, eyeY + 1 + oy, 1, 1);
+  const accessory = actor.look.accessory;
+  if (accessory === 'antenna' || accessory === 'stem') {
+    ctx.fillStyle = accessory === 'stem' ? '#2F8A3E' : '#1A1A1A';
+    ctx.fillRect(eyeX, body.y - 3, 1, 3);
+    ctx.fillStyle = accessory === 'stem' ? '#3EAF4E' : actor.look.color;
+    ctx.fillRect(eyeX - 1, body.y - 5, 3, 2);
+  } else if (accessory === 'glasses') {
+    ctx.fillStyle = '#1A1A1A';
+    ctx.fillRect(eyeX - 4 + ox, eyeY + oy, 3, 1);
+    ctx.fillRect(eyeX + 1 + ox, eyeY + oy, 3, 1);
+  } else if (accessory === 'bow') {
+    ctx.fillStyle = '#F2A3C7';
+    ctx.fillRect(body.x + body.w - 2, eyeY, 3, 2);
+    ctx.fillRect(body.x + body.w - 1, eyeY + 2, 2, 1);
   }
-    addPlant(parent, mats, 4.4, 3.2, 1.1, true);
-    addPlant(parent, mats, -5.6, 0.4, 0.65);
-    return { x: 4.2, z: 3.3 };
+}
+
+function dashes(ctx, points, color) {
+  if (!points || points.length < 2) return;
+  ctx.fillStyle = color;
+  let on = true;
+  let carry = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    const a = points[i - 1];
+    const b = points[i];
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const steps = Math.ceil(len / 4);
+    for (let s = 0; s <= steps; s += 1) {
+      carry += 1;
+      if (carry % 2 === 0) on = !on;
+      if (!on) continue;
+      const t = s / steps;
+      ctx.fillRect(Math.round(a.x + (b.x - a.x) * t), Math.round(a.y + (b.y - a.y) * t), 2, 2);
+    }
+  }
+  void color;
+}
+
+function paintArt(ctx, time, desks, actors, paths, reduce) {
+  checker(ctx, { x: 0, y: 0, w: WORLD.w, h: WORLD.h }, '#E5D7BE', '#F3E7D2', 16);
+  ctx.fillStyle = '#10261C';
+  ctx.fillRect(BUILDING.x, BUILDING.y, BUILDING.w, BUILDING.h);
+  ctx.fillStyle = '#1B3A2C';
+  ctx.fillRect(BUILDING.x + 2, BUILDING.y + 2, BUILDING.w - 4, BUILDING.h - 4);
+  for (const floor of FLOORS) checker(ctx, floor, floor.a, floor.b, 8);
+  ctx.fillStyle = '#142E22';
+  for (const wall of WALLS) ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
+  for (const door of DOORS) {
+    checker(ctx, door, '#E4CFA8', '#F6E6C8', 8);
+    ctx.fillStyle = '#6B4423';
+    ctx.fillRect(door.x, door.y, 3, door.h);
+  }
+  ctx.fillStyle = '#6B3030';
+  ctx.fillRect(226, 308, 28, 14);
+  ctx.fillStyle = '#8C403C';
+  ctx.fillRect(228, 310, 24, 8);
+  for (const piece of FURNITURE) {
+    if (piece.id === 'shelf') drawShelf(ctx, piece);
+    else if (piece.id === 'board') drawBoard(ctx, piece);
+    else if (piece.id === 'counter') drawCounter(ctx, piece);
+    else if (piece.id === 'swatch') drawSwatch(ctx, piece);
+  }
+  const typing = new Map(actors.map((actor) => [actor.name, actor]));
+  for (const desk of desks) {
+    const actor = desk.name ? typing.get(desk.name) : null;
+    const screen = actor ? (STATUS_COLOR[actor.status] || '#2A3330') : '#24302C';
+    const live = actor && actor.status === 'working' && !actor.walking && !reduce;
+    drawDesk(ctx, desk, screen, time, live);
+    drawChair(ctx, desk.x, desk.y);
+  }
+  for (const [x, y] of PLANTS) drawPlant(ctx, x, y);
+  for (const path of paths) dashes(ctx, path, '#7B4FD6');
+  const order = actors.slice().sort((a, b) => a.y - b.y);
+  for (const actor of order) drawBot(ctx, actor, time, reduce);
+}
+
+function overlaps(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function separate(boxes) {
+  for (let pass = 0; pass < 28; pass += 1) {
+    let hit = false;
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i];
+        const b = boxes[j];
+        if (a.fixed && b.fixed) continue;
+        if (!overlaps(a, b)) continue;
+        const overlapX = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+        const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+        if (overlapX <= 0 || oy <= 0) continue;
+        hit = true;
+        const aWeight = a.fixed ? 0 : b.fixed ? 1 : (a.pri >= b.pri ? 0.25 : 1);
+        const bWeight = b.fixed ? 0 : a.fixed ? 1 : (b.pri >= a.pri ? 0.25 : 1);
+        const total = aWeight + bWeight || 1;
+        if (overlapX < oy) {
+          const dir = (a.x + a.w / 2) <= (b.x + b.w / 2) ? -1 : 1;
+          a.x += dir * (overlapX + 2) * (aWeight / total);
+          b.x -= dir * (overlapX + 2) * (bWeight / total);
+        } else {
+          const dir = (a.y + a.h / 2) <= (b.y + b.h / 2) ? -1 : 1;
+          a.y += dir * (oy + 2) * (aWeight / total);
+          b.y -= dir * (oy + 2) * (bWeight / total);
+        }
+      }
+    }
+    if (!hit) break;
+  }
+}
+
+function faceOf(dx, dy, walking) {
+  if (!walking) return 'n';
+  if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 'e' : 'w';
+  return dy > 0 ? 's' : 'n';
 }
 
 export function createOffice(stage, hooks) {
-  let renderer;
-  try {
-    renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      alpha: false,
-      powerPreference: 'high-performance',
-    });
-  } catch {
+  const canvas = document.createElement('canvas');
+  canvas.className = 'view';
+  canvas.setAttribute('aria-label', 'Top-down pixel office. Pan with a drag, pinch or scroll to zoom, and choose a bot.');
+  const labels = el('div', 'map-labels');
+  stage.appendChild(canvas);
+  stage.appendChild(labels);
+  const view = canvas.getContext('2d');
+  if (!view) {
     const fatal = document.getElementById('fatal');
     if (fatal) {
       fatal.hidden = false;
-      fatal.textContent = 'This browser could not start the 3D view.';
+      fatal.textContent = 'This browser could not start the office view.';
     }
-    return blankOffice();
+    return {
+      setState() {},
+      setFloor() {},
+      focusBot() {},
+      clearBot() {},
+      zoom() {},
+      setReduce() {},
+      resize() {},
+    };
   }
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.08;
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.domElement.classList.add('view');
-  stage.appendChild(renderer.domElement);
-
-  const labelRenderer = new CSS2DRenderer();
-  labelRenderer.domElement.classList.add('labels');
-  stage.appendChild(labelRenderer.domElement);
-
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color('#F2F2F0');
-  const camera = new THREE.OrthographicCamera(-8, 8, 6, -6, 0.1, 80);
-  camera.position.set(16, 16, 16);
-  const ISO = new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(24);
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.target.set(0, 2.2, 0);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
-  controls.enablePan = false;
-  controls.minPolarAngle = 0.58;
-  controls.maxPolarAngle = 1.08;
-  controls.minZoom = 0.72;
-  controls.maxZoom = 2.6;
-  controls.zoomSpeed = 0.7;
-  controls.rotateSpeed = 0.55;
-  camera.lookAt(controls.target);
-  const phoneQuery = window.matchMedia('(max-width: 640px)');
-  function phoneLayout() {
-    return phoneQuery.matches;
-  }
-  function syncControls() {
-    const phone = phoneLayout();
-    controls.enabled = !phone;
-    controls.enableRotate = !phone;
-    controls.enablePan = false;
-    controls.minZoom = phone ? 0.45 : 0.72;
-    controls.maxZoom = phone ? 3.4 : 2.6;
-  }
-  syncControls();
-  phoneQuery.addEventListener('change', syncControls);
-  renderer.domElement.style.touchAction = 'none';
-
-  const hemi = new THREE.HemisphereLight('#ffffff', '#d5d8e0', 1.05);
-  const ambient = new THREE.AmbientLight('#ffffff', 0.45);
-  const sun = new THREE.DirectionalLight('#fffdf8', 2.05);
-  sun.position.set(-14, 22, 6);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(1024, 1024);
-  sun.shadow.bias = -0.00025;
-  sun.shadow.normalBias = 0.04;
-  sun.shadow.camera.near = 2;
-  sun.shadow.camera.far = 48;
-  sun.shadow.camera.left = -16;
-  sun.shadow.camera.right = 16;
-  sun.shadow.camera.top = 16;
-  sun.shadow.camera.bottom = -16;
-  scene.add(sun.target);
-  const fill = new THREE.DirectionalLight('#f8fafc', 0.55);
-  fill.position.set(-8, 10, -6);
-  scene.add(hemi, ambient, sun, fill);
-
-  const mats = makeMaterials();
-  const ground = shade(new THREE.Mesh(new THREE.CircleGeometry(28, 56), mats.ground), false);
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -0.03;
-  ground.receiveShadow = true;
-  scene.add(ground);
-  const shadowCanvas = document.createElement('canvas');
-  shadowCanvas.width = 128;
-  shadowCanvas.height = 128;
-  const shadowCtx = shadowCanvas.getContext('2d');
-  const shadowPaint = shadowCtx.createRadialGradient(64, 64, 10, 64, 64, 64);
-  shadowPaint.addColorStop(0, 'rgba(0,0,0,0.12)');
-  shadowPaint.addColorStop(1, 'rgba(0,0,0,0)');
-  shadowCtx.fillStyle = shadowPaint;
-  shadowCtx.fillRect(0, 0, 128, 128);
-  const shadowMap = new THREE.CanvasTexture(shadowCanvas);
-  const contact = new THREE.Mesh(
-    new THREE.CircleGeometry(12, 40),
-    new THREE.MeshBasicMaterial({ map: shadowMap, transparent: true, depthWrite: false, toneMapped: false }),
-  );
-  contact.rotation.x = -Math.PI / 2;
-  contact.position.y = 0.02;
-  scene.add(contact);
-
-  const building = new THREE.Group();
-  scene.add(building);
-  const elevator = new THREE.Group();
-  const postGeo = new THREE.BoxGeometry(0.06, 1, 0.06);
-  postGeo.userData.shared = true;
-  const posts = [];
-  for (const [x, z] of [[-0.55, -0.55], [0.55, -0.55], [-0.55, 0.55], [0.55, 0.55]]) {
-    const post = new THREE.Mesh(postGeo, mats.mullion);
-    post.position.set(x, 0, z);
-    post.castShadow = true;
-    elevator.add(post);
-    posts.push(post);
-  }
-  const shaftGlass = new THREE.Mesh(new THREE.BoxGeometry(1.15, 1, 1.15), mats.glass);
-  elevator.add(shaftGlass);
-  elevator.position.set(W / 2 + 0.95, 0, 0.2);
-  scene.add(elevator);
-  const elevBars = [];
-
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(0.48, 0.03, 8, 28),
-    new THREE.MeshBasicMaterial({ color: '#A1A1AA', toneMapped: false }),
-  );
-  ring.rotation.x = Math.PI / 2;
-  ring.visible = false;
-  scene.add(ring);
+  const art = document.createElement('canvas');
+  art.width = WORLD.w;
+  art.height = WORLD.h;
+  const artCtx = art.getContext('2d');
 
   let state = null;
-  let builtSig = '';
-  let roomApis = [];
-  let levels = [];
-  let records = [];
-  let pickables = [];
-  let active = 0;
+  let reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   let selected = null;
   let hovered = null;
-  let reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let zoomAnim = null;
-  let motion = null;
-  let dragging = false;
-  const clock = new THREE.Clock();
-  let elapsed = 0;
-  let frames = 0;
-  const pointer = new THREE.Vector2();
-  const raycaster = new THREE.Raycaster();
-  const desiredTarget = new THREE.Vector3();
-  let snapped = false;
-  let userZoomed = false;
-  const pan = new THREE.Vector3();
-
-  function buildInterior(parent, floor) {
-    addCurtain(parent, mats, W - 0.8, 2.7, 0, -D / 2 + 0.28, 0);
-    addCurtain(parent, mats, D - 1.2, 2.7, W / 2 - 0.28, 0.2, Math.PI / 2);
-    const ops = floor.theme === 'lounge';
-    if (ops) addPlant(parent, mats, 2.35, 4.5, 0.75, true);
-    else addPlant(parent, mats, -5.3, 3.5, 1, true);
-    addPlant(parent, mats, 5.2, -2.6, 0.9, true);
-    addPlant(parent, mats, -5.4, -3.4, 0.75);
-    const corners = ops
-      ? [[5.65, 4.4, 0.85], [-5.8, -4.2, 0.8], [5.5, -4.35, 0.7]]
-      : [[-5.75, 4.45, 0.9], [5.7, 4.4, 0.8], [-5.8, -4.25, 0.75], [5.55, -4.4, 0.7]];
-    corners.forEach(([x, z, scale], index) => addPlant(parent, mats, x, z, scale, index === 0));
-    addPlant(parent, mats, ops ? -2.2 : -2.5, -4.55, 0.62);
-    const seats = ops
-      ? [
-        ...addDeskRow(parent, mats, -1.45, { origin: -1.45, gap: 2.4, count: 4 }),
-        ...addDeskRow(parent, mats, 1.05, { origin: -1.45, gap: 2.4, count: 4 }),
-      ]
-      : [
-        ...addDeskRow(parent, mats, -0.55, { origin: -3.9, gap: 2.7, count: 4 }),
-        ...addDeskRow(parent, mats, 1.85, { origin: -3.9, gap: 2.7, count: 4 }),
-      ];
-    const lounge = addTheme(parent, mats, floor.theme || 'open');
-    if (floor.theme !== 'meeting') {
-      const tableX = ops ? 1.6 : 2.15;
-      const tableZ = -4.05;
-      addMeetingTable(parent, mats, tableX, tableZ);
-      addPlant(parent, mats, tableX + 1.35, tableZ + 0.15, 0.7);
-    }
-    addWallArt(parent, mats);
-    const kaiOffice = ops ? addKaiOffice(parent, mats) : null;
-    const pinkDesk = ops && floor.bots.includes('Pink') ? addPinkDesk(parent, mats) : null;
-    if (kaiOffice) {
-      roomApis.push(kaiOffice);
-      kaiOffice.group.traverse((obj) => {
-        if (!obj.isMesh) return;
-        pickables.push(obj);
-      });
-    }
-    let sleepers = 0;
-    let seatCursor = 0;
-    floor.bots.forEach((name, index) => {
-      const look = lookFor(state, name);
-      const visual = createCharacter(name, look);
-      const inOffice = name === 'Kai' && kaiOffice;
-      const atPink = name === 'Pink' && pinkDesk;
-      const seat = seats[seatCursor % Math.max(seats.length, 1)];
-      if (!inOffice && !atPink) seatCursor += 1;
-      const seatPos = inOffice
-        ? { x: kaiOffice.desk.x, z: kaiOffice.desk.z, screenMat: null }
-        : atPink
-          ? pinkDesk
-          : (seats.length ? seat : { x: -1 + index, z: 0, screenMat: null });
-      visual.root.position.set(seatPos.x, 0.46, seatPos.z);
-      parent.add(visual.root);
-      visual.pickRoot.traverse((obj) => {
-        if (!obj.isMesh) return;
-        obj.userData.botName = name;
-        pickables.push(obj);
-      });
-      const persona = presentBot(state.bots[name], Date.now(), name).persona;
-      const sleepIndex = persona === 'sleep' ? sleepers++ : 0;
-      records.push({
-        name,
-        visual,
-        seat: { x: seatPos.x, z: seatPos.z },
-        face: inOffice ? kaiOffice.deskFace : null,
-        screenMat: seatPos.screenMat,
-        lounge: { x: lounge.x - sleepIndex * 0.45, z: lounge.z },
-        homeKey: floor.key,
-        floorKey: floor.key,
-        office: inOffice ? kaiOffice : null,
-        nextBoard: 7,
-      });
-    });
-  }
-
-  function build(floors) {
-    roomApis.forEach((api) => api.dispose());
-    roomApis = [];
-    disposeTree(building);
-    building.clear();
-    records = [];
-    pickables = [];
-    elevBars.forEach((bar) => elevator.remove(bar));
-    elevBars.length = 0;
-    levels = floors.map((floor, index) => {
-      const group = new THREE.Group();
-      const plinth = box(W, 0.34, D, mats.shell);
-      plinth.position.y = 0.17;
-      const band = box(W - 0.45, 0.2, D - 0.45, mats.band);
-      band.position.y = 0.42;
-      const plate = box(W - 0.12, 0.08, D - 0.12, mats.floor);
-      plate.position.y = BASE - 0.04;
-      group.add(plinth, band, plate);
-      const interior = new THREE.Group();
-      interior.position.y = BASE;
-      group.add(interior);
-      buildInterior(interior, floor);
-      building.add(group);
-      const bar = box(1.05, 0.035, 1.05, mats.mullion, false);
-      elevator.add(bar);
-      elevBars.push(bar);
-      return {
-        key: floor.key,
-        group,
-        interior,
-        y: index * SLAB,
-        h: index === active ? OPEN : SLAB,
-      };
-    });
-    if (!levels.length) active = 0;
-    else active = Math.min(active, levels.length - 1);
-  }
-
-  function signature(floors) {
-    return floors.map((floor) => `${floor.key}:${floor.theme}:${floor.bots.join('\u0001')}`).join('|')
-      + '#'
-      + (state?.roster || []).map((name) => {
-        const look = lookFor(state, name);
-        return `${look.shape}:${look.color}:${look.accessory}`;
-      }).join(';');
-  }
-
-  function layoutInstant() {
-    let cursor = 0;
-    levels.forEach((level, index) => {
-      const open = index === active;
-      if (!open) {
-        level.y = cursor;
-        level.h = SLAB;
-        cursor += SLAB;
-      }
-    });
-    if (levels[active]) {
-      levels[active].y = cursor;
-      levels[active].h = OPEN;
-    }
-    levels.forEach((level, index) => {
-      level.group.position.y = level.y;
-      level.interior.visible = index === active;
-      level.interior.scale.setScalar(1);
-    });
-    motion = null;
-  }
-
-  function poseTargets(index) {
-    let cursor = 0;
-    const targets = levels.map(() => ({ y: 0, h: SLAB }));
-    levels.forEach((_, i) => {
-      if (i === index) return;
-      targets[i].y = cursor;
-      targets[i].h = SLAB;
-      cursor += SLAB;
-    });
-    if (levels[index]) {
-      targets[index].y = cursor;
-      targets[index].h = OPEN;
-    }
-    return targets;
-  }
-
-  function applyPose(pose) {
-    levels.forEach((level, index) => {
-      level.y = pose[index].y;
-      level.h = pose[index].h;
-      level.group.position.y = level.y;
-      const openAmount = THREE.MathUtils.clamp((level.h - SLAB) / Math.max(OPEN - SLAB, 0.001), 0, 1);
-      level.interior.visible = openAmount > 0.2;
-      level.interior.scale.setScalar(0.9 + 0.1 * openAmount);
-    });
-  }
-
-  function setState(next) {
-    state = next;
-    const floors = floorPlan(next);
-    const sig = signature(floors);
-    const previous = levels[active]?.key;
-    if (sig !== builtSig) {
-      builtSig = sig;
-      const keep = floors.findIndex((floor) => floor.key === previous);
-      if (keep >= 0) active = keep;
-      build(floors);
-      layoutInstant();
-      snapped = false;
-      if (!userZoomed) frameFloor();
-    }
-  }
-
-  function frameFloor() {
-    const rect = stage.getBoundingClientRect();
-    const narrow = window.innerWidth <= 640;
-    const left = narrow ? 12 : 312;
-    const right = narrow ? 12 : 332;
-    const top = narrow ? 148 : 16;
-    const bottom = narrow ? 72 : 16;
-    const availW = Math.max(140, rect.width - left - right);
-    const availH = Math.max(140, rect.height - top - bottom);
-    const aspect = Math.max(rect.width, 1) / Math.max(rect.height, 1);
-    const viewH = 12.8;
-    const viewW = viewH * aspect;
-    const span = (W + D) * 0.78;
-    const tall = OPEN + (W + D) * 0.2;
-    const zoomW = (availW / rect.width) * viewW / span;
-    const zoomH = (availH / rect.height) * viewH / tall;
-    const fitted = THREE.MathUtils.clamp(Math.min(zoomW, zoomH), controls.minZoom, controls.maxZoom);
-    zoomAnim = { from: camera.zoom, to: fitted, start: performance.now(), dur: reduce ? 0 : 720 };
-  }
-
-  function setFloor(index) {
-    if (!levels.length) return;
-    const next = Math.max(0, Math.min(levels.length - 1, index));
-    if (next === active) return;
-    const from = levels.map((level) => ({ y: level.y, h: level.h }));
-    active = next;
-    motion = {
-      start: performance.now(),
-      dur: reduce ? 0 : 720,
-      from,
-      to: poseTargets(active),
-    };
-    userZoomed = false;
-    pan.set(0, 0, 0);
-    frameFloor();
-  }
-
-  function focusBot(name) {
-    selected = name || null;
-  }
-
-  function clearBot() {
-    selected = null;
-  }
-
-  function zoom(direction) {
-    const next = THREE.MathUtils.clamp(camera.zoom * (direction > 0 ? 1.18 : 1 / 1.18), controls.minZoom, controls.maxZoom);
-    userZoomed = true;
-    zoomAnim = { from: camera.zoom, to: next, start: performance.now(), dur: 280 };
-  }
-
-  controls.addEventListener('start', () => {
-    zoomAnim = null;
-    dragging = true;
-  });
-  controls.addEventListener('end', () => {
-    dragging = false;
-  });
-
-  function pick(clientX, clientY) {
-    const rect = renderer.domElement.getBoundingClientRect();
-    if (!rect.width || !rect.height) return null;
-    pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-    pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-    raycaster.setFromCamera(pointer, camera);
-    const hits = raycaster.intersectObjects(pickables, false);
-    return hits.length ? hits[0].object.userData.botName || null : null;
-  }
-
-  const down = { active: false, id: 0, x: 0, y: 0, moved: false };
+  let active = -1;
+  let framed = false;
+  let userMoved = false;
+  let frameTarget = { x: BUILDING.x, y: BUILDING.y, w: BUILDING.w, h: BUILDING.h };
+  const cam = { x: WORLD.w / 2, y: WORLD.h / 2, z: 2 };
+  const camTo = { x: cam.x, y: cam.y, z: cam.z };
+  const agents = new Map();
+  let assignments = [];
+  let desks = [];
+  let nav = buildNav();
+  let seatKey = '';
+  let viewW = 1;
+  let viewH = 1;
   const pointers = new Map();
-  let pinchDist = 0;
-  let pinchZoom = 1;
+  let pinch = null;
+  let dragging = false;
+  const nodes = new Map();
 
-  function touchDistance() {
-    const pts = [...pointers.values()];
-    if (pts.length < 2) return 0;
-    return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+  function insets() {
+    const narrow = window.matchMedia('(max-width: 640px)').matches;
+    if (narrow) return { left: 8, right: 8, top: 6, bottom: 6 };
+    const banner = document.getElementById('banner');
+    const bannerOn = banner && !banner.hidden;
+    return { left: 300, right: 316, top: bannerOn ? 96 : 74, bottom: 148 };
   }
 
-  function panPixels(dx, dy) {
-    camera.updateMatrixWorld();
-    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
-    const camUp = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
-    right.y = 0;
-    camUp.y = 0;
-    if (right.lengthSq() < 1e-8 || camUp.lengthSq() < 1e-8) return;
-    right.normalize();
-    camUp.normalize();
-    const height = Math.max(1, renderer.domElement.clientHeight);
-    const scale = (camera.top - camera.bottom) / (camera.zoom * height);
-    pan.x = THREE.MathUtils.clamp(pan.x + (-dx * right.x + dy * camUp.x) * scale, -9, 9);
-    pan.z = THREE.MathUtils.clamp(pan.z + (-dx * right.z + dy * camUp.z) * scale, -9, 9);
+  function fit(bounds) {
+    const pad = insets();
+    const availW = Math.max(80, viewW - pad.left - pad.right);
+    const availH = Math.max(80, viewH - pad.top - pad.bottom);
+    const z = Math.min(7, Math.max(0.35, Math.min(availW / bounds.w, availH / bounds.h)));
+    const cx = bounds.x + bounds.w / 2;
+    const cy = bounds.y + bounds.h / 2;
+    const screenCx = pad.left + availW / 2;
+    const screenCy = pad.top + availH / 2;
+    return {
+      x: cx - (screenCx - viewW / 2) / z,
+      y: cy - (screenCy - viewH / 2) / z,
+      z,
+    };
   }
 
-  renderer.domElement.addEventListener('wheel', () => {
-    userZoomed = true;
-    zoomAnim = null;
-  }, { passive: true });
-  renderer.domElement.addEventListener('pointerdown', (event) => {
-    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    renderer.domElement.setPointerCapture?.(event.pointerId);
-    if (phoneLayout()) {
-      dragging = true;
-      down.moved = pointers.size > 1 || down.moved;
-      if (pointers.size === 2) {
-        pinchDist = touchDistance();
-        pinchZoom = camera.zoom;
-        userZoomed = true;
-        zoomAnim = null;
-      } else if (pointers.size === 1) {
-        down.active = true;
-        down.id = event.pointerId;
-        down.x = event.clientX;
-        down.y = event.clientY;
-        down.moved = false;
+  function frame(bounds, pad = 18) {
+    frameTarget = {
+      x: bounds.x - pad,
+      y: bounds.y - pad,
+      w: bounds.w + pad * 2,
+      h: bounds.h + pad * 2,
+    };
+    const next = fit(frameTarget);
+    camTo.x = next.x;
+    camTo.y = next.y;
+    camTo.z = next.z;
+    if (!framed || reduce) {
+      cam.x = next.x;
+      cam.y = next.y;
+      cam.z = next.z;
+    }
+  }
+
+  function frameFloor(index) {
+    const floors = floorPlan(state || { roster: [], groups: {} });
+    const floor = floors[index];
+    if (!floor || !floor.bots.length) {
+      frame(BUILDING, 10);
+      return;
+    }
+    const rooms = [...new Set(floor.bots.map((name) => teamRoom(state.groups[name])).filter((id) => ROOMS_SAFE(id)))];
+    frame(rooms.length ? boundsOf(rooms) : BUILDING, 28);
+  }
+
+  function ROOMS_SAFE(id) {
+    return id === 'research' || id === 'webdev' || id === 'ops' || id === 'design';
+  }
+
+  function syncSeats() {
+    const next = assignSeats(state?.roster || [], state?.groups || {});
+    const key = next.map((seat) => `${seat.name}:${seat.x}:${seat.y}`).join('|');
+    if (key === seatKey) return;
+    seatKey = key;
+    assignments = next;
+    desks = visibleDesks(next);
+    nav = buildNav(desks);
+    const keep = new Set(next.map((seat) => seat.name));
+    for (const name of agents.keys()) {
+      if (!keep.has(name)) agents.delete(name);
+    }
+    for (const seat of next) {
+      const agent = agents.get(seat.name);
+      if (!agent) agents.set(seat.name, createAgent(seat.x, seat.y));
+      else if (agent.phase === 'sit') {
+        agent.x = seat.x;
+        agent.y = seat.y;
       }
-      return;
     }
-    down.active = true;
-    down.id = event.pointerId;
-    down.x = event.clientX;
-    down.y = event.clientY;
-    down.moved = false;
-  });
-  renderer.domElement.addEventListener('pointerup', (event) => {
-    pointers.delete(event.pointerId);
-    if (phoneLayout()) {
-      dragging = pointers.size > 0;
-      if (pointers.size < 2) pinchDist = 0;
-      if (pointers.size === 0 && event.pointerId === down.id && !down.moved) {
-        const dx = event.clientX - down.x;
-        const dy = event.clientY - down.y;
-        if (dx * dx + dy * dy <= 49) hooks.onPick(pick(event.clientX, event.clientY));
+  }
+
+  function pathTo(from, to) {
+    return findPath(nav, from.x, from.y, to.x, to.y);
+  }
+
+  function project(x, y) {
+    const originX = Math.round(viewW / 2 - cam.x * cam.z);
+    const originY = Math.round(viewH / 2 - cam.y * cam.z);
+    const scaleX = Math.round(WORLD.w * cam.z) / WORLD.w;
+    const scaleY = Math.round(WORLD.h * cam.z) / WORLD.h;
+    return { x: originX + x * scaleX, y: originY + y * scaleY };
+  }
+
+  function screenToWorld(sx, sy) {
+    const originX = Math.round(viewW / 2 - cam.x * cam.z);
+    const originY = Math.round(viewH / 2 - cam.y * cam.z);
+    const scaleX = Math.round(WORLD.w * cam.z) / WORLD.w;
+    const scaleY = Math.round(WORLD.h * cam.z) / WORLD.h;
+    return { x: (sx - originX) / scaleX, y: (sy - originY) / scaleY };
+  }
+
+  function clampCamera(target) {
+    const margin = 48;
+    target.x = Math.min(BUILDING.x + BUILDING.w + margin, Math.max(BUILDING.x - margin, target.x));
+    target.y = Math.min(BUILDING.y + BUILDING.h + margin, Math.max(BUILDING.y - margin, target.y));
+  }
+
+  function zoomAt(sx, sy, nextZ) {
+    const before = screenToWorld(sx, sy);
+    cam.z = Math.min(7, Math.max(0.35, nextZ));
+    camTo.z = cam.z;
+    const after = screenToWorld(sx, sy);
+    cam.x += before.x - after.x;
+    cam.y += before.y - after.y;
+    clampCamera(cam);
+    camTo.x = cam.x;
+    camTo.y = cam.y;
+  }
+
+  function node(key, className) {
+    let item = nodes.get(key);
+    if (!item) {
+      item = el('div', className);
+      labels.appendChild(item);
+      nodes.set(key, item);
+    }
+    item.hidden = false;
+    return item;
+  }
+
+  function hideStale(prefix, keep) {
+    for (const [key, item] of nodes) {
+      if (key.startsWith(prefix) && !keep.has(key)) item.hidden = true;
+    }
+  }
+
+  function layoutLabels(actors, hitboxes) {
+    const boxes = [];
+    const keep = new Set();
+    for (const sign of SIGNS) {
+      const key = `sign:${sign.id}`;
+      keep.add(key);
+      const item = node(key, 'room-sign');
+      const title = item.querySelector('b') || el('b');
+      const sub = item.querySelector('span') || el('span');
+      if (!item.contains(title)) item.append(title, sub);
+      if (title.textContent !== sign.title) title.textContent = sign.title;
+      if (sub.textContent !== sign.sub) sub.textContent = sign.sub;
+      sub.hidden = !sign.sub;
+      const p = project(sign.x, sign.y);
+      const w = item.offsetWidth || 64;
+      const h = item.offsetHeight || 18;
+      boxes.push({ el: item, x: p.x, y: p.y, w, h, fixed: true, pri: 0, ax: p.x, ay: p.y });
+    }
+    for (const actor of actors) {
+      const p = project(actor.x, actor.y);
+      const tagKey = `tag:${actor.name}`;
+      keep.add(tagKey);
+      const tag = node(tagKey, `map-tag${actor.selected ? ' is-selected' : ''}`);
+      tag.classList.toggle('is-selected', actor.selected);
+      const name = tag.querySelector('.map-name') || el('span', 'map-name');
+      const stateEl = tag.querySelector('.map-state') || el('span', 'map-state');
+      if (!tag.contains(name)) tag.append(name, stateEl);
+      name.dir = 'auto';
+      if (name.textContent !== actor.name) name.textContent = actor.name;
+      const word = STATUS_WORD[actor.status] || 'Resting';
+      stateEl.className = `map-state tone-${actor.status === 'waiting_user' ? 'waiting' : actor.status}`;
+      if (stateEl.textContent !== word) stateEl.textContent = word;
+      stateEl.hidden = cam.z < 1.25;
+      const tw = tag.offsetWidth || 72;
+      const th = tag.offsetHeight || 28;
+      const below = Math.max(14, 10 * cam.z);
+      boxes.push({
+        kind: 'tag',
+        el: tag,
+        x: p.x - tw / 2,
+        y: p.y + below,
+        w: tw,
+        h: th,
+        fixed: false,
+        pri: actor.selected || actor.hovered ? 4 : 1,
+        ax: p.x - tw / 2,
+        ay: p.y + below,
+        name: actor.name,
+      });
+      const mark = actor.status === 'waiting_user' ? '!' : actor.status === 'error' ? '×' : actor.status === 'done' ? '✓' : '';
+      if (mark) {
+        const markKey = `mark:${actor.name}`;
+        keep.add(markKey);
+        const bubble = node(markKey, `map-mark mark-${actor.status === 'waiting_user' ? 'waiting' : actor.status}`);
+        if (bubble.textContent !== mark) bubble.textContent = mark;
+        const mw = bubble.offsetWidth || 18;
+        const mh = bubble.offsetHeight || 18;
+        boxes.push({
+          kind: 'mark', el: bubble, x: p.x - mw / 2, y: p.y - 18 - mh, w: mw, h: mh, fixed: false, pri: 3, ax: p.x - mw / 2, ay: p.y - 18 - mh,
+        });
       }
-      return;
+      if (actor.sleep) {
+        const zKey = `zzz:${actor.name}`;
+        keep.add(zKey);
+        const zzz = node(zKey, 'map-zzz');
+        if (!zzz.childElementCount) zzz.append(el('i', null, 'z'), el('i', null, 'z'), el('i', null, 'z'));
+        const zw = zzz.offsetWidth || 22;
+        const zh = zzz.offsetHeight || 28;
+        const slot = hashName(actor.name) % 3;
+        const zx = p.x + 4 + (slot - 1) * (zw + 6);
+        const zy = p.y - zh - 10;
+        boxes.push({
+          kind: 'zzz', el: zzz, x: zx, y: zy, w: zw, h: zh, fixed: false, pri: 3, ax: zx, ay: zy,
+        });
+      }
+      if (actor.step && (actor.selected || actor.hovered)) {
+        const stepKey = `step:${actor.name}`;
+        keep.add(stepKey);
+        const step = node(stepKey, 'map-step');
+        step.dir = 'auto';
+        const text = actor.step.slice(0, 80);
+        if (step.textContent !== text) step.textContent = text;
+        const sw = step.offsetWidth || 120;
+        const sh = step.offsetHeight || 22;
+        boxes.push({
+          kind: 'step', el: step, x: p.x - sw / 2, y: p.y - 36 - sh, w: sw, h: sh, fixed: false, pri: 5, ax: p.x - sw / 2, ay: p.y - 36 - sh,
+        });
+      }
     }
-    if (!down.active || event.pointerId !== down.id) return;
-    const dx = event.clientX - down.x;
-    const dy = event.clientY - down.y;
-    down.active = false;
-    if (dx * dx + dy * dy > 49) return;
-    hooks.onPick(pick(event.clientX, event.clientY));
-  });
-  renderer.domElement.addEventListener('pointermove', (event) => {
-    if (phoneLayout() && pointers.has(event.pointerId)) {
-      const prev = pointers.get(event.pointerId);
-      const dx = event.clientX - prev.x;
-      const dy = event.clientY - prev.y;
-      prev.x = event.clientX;
-      prev.y = event.clientY;
-      if (dx || dy) down.moved = true;
-      if (pointers.size === 1 && pinchDist === 0) panPixels(dx, dy);
-      return;
+    hideStale('sign:', keep);
+    hideStale('tag:', keep);
+    hideStale('mark:', keep);
+    hideStale('zzz:', keep);
+    hideStale('step:', keep);
+    const sprites = actors.map((actor) => {
+      const p = project(actor.x, actor.y);
+      const radius = Math.max(11, 8 * cam.z);
+      return { x: p.x - radius, y: p.y - radius, w: radius * 2, h: radius * 2, fixed: true, pri: 0 };
+    });
+    separate([...boxes, ...sprites]);
+    const zzz = boxes.filter((box) => box.kind === 'zzz');
+    const nudgeZzz = () => {
+      for (let pass = 0; pass < 16; pass += 1) {
+        let moved = false;
+        for (let i = 0; i < zzz.length; i += 1) {
+          for (let j = i + 1; j < zzz.length; j += 1) {
+            if (!overlaps(zzz[i], zzz[j])) continue;
+            zzz[j].x += zzz[i].w + 4;
+            moved = true;
+          }
+          for (const other of boxes) {
+            if (other.kind === 'zzz' || other.fixed || !overlaps(zzz[i], other)) continue;
+            zzz[i].y -= other.h + 3;
+            moved = true;
+          }
+        }
+        if (!moved) break;
+      }
+    };
+    nudgeZzz();
+    for (const box of boxes) {
+      if (box.fixed || box.hidden) continue;
+      const offscreen = box.ax < -12 || box.ay < -12 || box.ax > viewW - 8 || box.ay > viewH - 8;
+      if (offscreen) {
+        box.el.hidden = true;
+        box.hidden = true;
+      }
     }
-    if (event.pointerType === 'touch') return;
-    const name = pick(event.clientX, event.clientY);
-    if (name !== hovered) {
-      hovered = name;
-      renderer.domElement.style.cursor = name ? 'pointer' : '';
+    for (const box of boxes) {
+      if (box.hidden) continue;
+      box.x = Math.max(2, Math.min(viewW - box.w - 2, box.x));
+      box.y = Math.max(2, Math.min(viewH - box.h - 2, box.y));
     }
-  });
-  function touchSpan(touches) {
-    if (!touches || touches.length < 2) return 0;
-    return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+    nudgeZzz();
+    const tags = boxes.filter((box) => box.kind === 'tag' && !box.hidden);
+    for (const tag of tags) {
+      for (const sprite of sprites) {
+        if (overlaps(tag, sprite)) tag.y = sprite.y + sprite.h + 2;
+      }
+    }
+    tags.sort((a, b) => b.pri - a.pri);
+    const dropped = new Set();
+    for (const tag of tags) {
+      const blocked = tags.some((other) => other !== tag && !dropped.has(other) && overlaps(tag, other))
+        || boxes.some((other) => other.fixed && !other.hidden && overlaps(tag, other));
+      if (blocked) {
+        tag.el.hidden = true;
+        tag.hidden = true;
+        dropped.add(tag);
+      }
+    }
+    for (const box of boxes) {
+      if (box.hidden) continue;
+      box.el.style.left = `${Math.round(box.x)}px`;
+      box.el.style.top = `${Math.round(box.y)}px`;
+      if (box.name) hitboxes.push({ name: box.name, x: box.x, y: box.y, w: box.w, h: box.h });
+    }
   }
 
-  function beginPinch(touches) {
-    const span = touchSpan(touches);
-    if (span <= 0) return;
-    pinchDist = span;
-    pinchZoom = camera.zoom;
-    userZoomed = true;
-    zoomAnim = null;
-    down.moved = true;
+  function pick(sx, sy, hitboxes, actors) {
+    for (const box of hitboxes) {
+      if (sx >= box.x && sx <= box.x + box.w && sy >= box.y && sy <= box.y + box.h) return box.name;
+    }
+    const world = screenToWorld(sx, sy);
+    let best = null;
+    let bestD = 18;
+    for (const actor of actors) {
+      const dist = Math.hypot(actor.x - world.x, actor.y - world.y);
+      if (dist < bestD) {
+        best = actor.name;
+        bestD = dist;
+      }
+    }
+    return best;
   }
 
-  function applyPinch(touches) {
-    const span = touchSpan(touches);
-    if (pinchDist <= 0 || span <= 0) return;
-    camera.zoom = THREE.MathUtils.clamp(
-      pinchZoom * (span / pinchDist),
-      controls.minZoom,
-      controls.maxZoom,
-    );
-    camera.updateProjectionMatrix();
-    userZoomed = true;
-    zoomAnim = null;
+  let lastActors = [];
+  let hitboxes = [];
+  let last = performance.now();
+
+  function tick(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (!reduce && !dragging && !pinch) {
+      const k = 1 - Math.exp(-8 * dt);
+      cam.x += (camTo.x - cam.x) * k;
+      cam.y += (camTo.y - cam.y) * k;
+      cam.z += (camTo.z - cam.z) * k;
+    }
+    syncSeats();
+    const roster = state?.roster || [];
+    const clockNow = Date.now();
+    const seatByName = new Map(assignments.map((seat) => [seat.name, seat]));
+    const actors = [];
+    const paths = [];
+    for (const name of roster) {
+      const seat = seatByName.get(name);
+      if (!seat) continue;
+      const presentation = presentBot(state.bots[name], clockNow, name);
+      const partnerName = namedPartner(presentation.step, name, roster, presentation.status);
+      const partner = partnerName ? seatByName.get(partnerName) : null;
+      const prev = agents.get(name) || createAgent(seat.x, seat.y);
+      const agent = advanceAgent(prev, {
+        dt,
+        reduce,
+        seat: { x: seat.x, y: seat.y },
+        partner: partner ? { x: partner.x, y: partner.y } : null,
+        key: partner ? `${partnerName}|${presentation.step}` : '',
+        pathTo,
+      });
+      agents.set(name, agent);
+      if (agent.walking || agent.phase === 'pause' || agent.phase === 'out' || agent.phase === 'back') {
+        if (agent.path && agent.path.length > 1) paths.push(agent.path);
+      }
+      const face = faceOf(agent.x - prev.x, agent.y - prev.y, agent.walking);
+      actors.push({
+        name,
+        x: agent.x,
+        y: agent.y,
+        look: lookFor(state, name),
+        status: presentation.status,
+        sleep: presentation.status === 'idle' && presentation.persona === 'sleep' && !agent.walking,
+        walking: agent.walking,
+        face,
+        phase: (name.length * 1.7) % Math.PI,
+        selected: selected === name,
+        hovered: hovered === name,
+        step: presentation.step,
+      });
+    }
+    paintArt(artCtx, now / 1000, desks, actors, paths, reduce);
+    view.setTransform(1, 0, 0, 1, 0, 0);
+    view.imageSmoothingEnabled = false;
+    view.clearRect(0, 0, canvas.width, canvas.height);
+    const originX = Math.round(viewW / 2 - cam.x * cam.z);
+    const originY = Math.round(viewH / 2 - cam.y * cam.z);
+    const destW = Math.round(WORLD.w * cam.z);
+    const destH = Math.round(WORLD.h * cam.z);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    view.setTransform(dpr, 0, 0, dpr, 0, 0);
+    view.imageSmoothingEnabled = false;
+    view.drawImage(art, originX, originY, destW, destH);
+    hitboxes = [];
+    layoutLabels(actors, hitboxes);
+    lastActors = actors;
+    document.body.dataset.ready = '1';
+    document.body.dataset.zoom = cam.z.toFixed(3);
+    document.body.dataset.office = 'pixel';
+    const walking = actors.filter((actor) => actor.walking).map((actor) => actor.name);
+    document.body.dataset.walking = walking.join(',');
   }
 
-  renderer.domElement.addEventListener('touchstart', (event) => {
-    if (!phoneLayout() || event.touches.length < 2) return;
-    beginPinch(event.touches);
-  }, { passive: true });
-  renderer.domElement.addEventListener('touchmove', (event) => {
-    if (!phoneLayout() || event.touches.length < 2) return;
-    event.preventDefault();
-    if (pinchDist <= 0) beginPinch(event.touches);
-    applyPinch(event.touches);
-  }, { passive: false });
-  renderer.domElement.addEventListener('touchend', (event) => {
-    if (event.touches.length < 2) pinchDist = 0;
-  });
-  renderer.domElement.addEventListener('touchcancel', () => {
-    pinchDist = 0;
-  });
-  renderer.domElement.addEventListener('pointercancel', (event) => {
-    pointers.delete(event.pointerId);
-    dragging = pointers.size > 0;
-    if (pointers.size < 2) pinchDist = 0;
-  });
-  renderer.domElement.addEventListener('pointerleave', () => {
-    hovered = null;
-    renderer.domElement.style.cursor = '';
-  });
+  function loop(now) {
+    tick(now);
+    requestAnimationFrame(loop);
+  }
 
   function resize() {
-    const width = Math.max(1, stage.clientWidth);
-    const height = Math.max(1, stage.clientHeight);
-    const aspect = width / height;
-    const frustum = 6.4;
-    camera.top = frustum;
-    camera.bottom = -frustum;
-    camera.left = -frustum * aspect;
-    camera.right = frustum * aspect;
-    camera.updateProjectionMatrix();
-    renderer.setSize(width, height, false);
-    labelRenderer.setSize(width, height);
-    const labels = labelRenderer.domElement;
-    labels.style.inset = 'auto';
-    labels.style.left = '0px';
-    labels.style.top = '0px';
-    if (levels.length && !userZoomed) frameFloor();
+    viewW = Math.max(1, stage.clientWidth);
+    viewH = Math.max(1, stage.clientHeight);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(viewW * dpr);
+    canvas.height = Math.round(viewH * dpr);
+    canvas.style.width = `${viewW}px`;
+    canvas.style.height = `${viewH}px`;
+    if (!userMoved) {
+      const next = fit(frameTarget);
+      camTo.x = next.x;
+      camTo.y = next.y;
+      camTo.z = next.z;
+      if (reduce) {
+        cam.x = next.x;
+        cam.y = next.y;
+        cam.z = next.z;
+      }
+    }
   }
+
+  function localPoint(event) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  }
+
+  canvas.addEventListener('pointerdown', (event) => {
+    canvas.setPointerCapture(event.pointerId);
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, moved: false });
+    if (pointers.size === 2) {
+      for (const item of pointers.values()) item.moved = true;
+      const pts = [...pointers.values()];
+      pinch = {
+        dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1,
+        z: cam.z,
+        ...localPoint({ clientX: (pts[0].x + pts[1].x) / 2, clientY: (pts[0].y + pts[1].y) / 2 }),
+      };
+      dragging = false;
+    }
+  });
+  canvas.addEventListener('pointermove', (event) => {
+    const point = pointers.get(event.pointerId);
+    if (!point) {
+      const here = localPoint(event);
+      hovered = pick(here.x, here.y, hitboxes, lastActors);
+      canvas.style.cursor = hovered ? 'pointer' : 'grab';
+      return;
+    }
+    if (pointers.size >= 2 && pinch) {
+      point.x = event.clientX;
+      point.y = event.clientY;
+      const pts = [...pointers.values()];
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+      zoomAt(pinch.x, pinch.y, pinch.z * (dist / pinch.dist));
+      userMoved = true;
+      return;
+    }
+    const dx = event.clientX - point.x;
+    const dy = event.clientY - point.y;
+    if (Math.hypot(event.clientX - (point.originX || point.x), event.clientY - (point.originY || point.y)) > 5) {
+      point.moved = true;
+      dragging = true;
+    }
+    if (point.originX == null) {
+      point.originX = point.x;
+      point.originY = point.y;
+    }
+    if (dragging) {
+      cam.x -= dx / cam.z;
+      cam.y -= dy / cam.z;
+      clampCamera(cam);
+      camTo.x = cam.x;
+      camTo.y = cam.y;
+      userMoved = true;
+    }
+    point.x = event.clientX;
+    point.y = event.clientY;
+  });
+  function endPointer(event) {
+    const point = pointers.get(event.pointerId);
+    pointers.delete(event.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (!point) return;
+    if (!point.moved && pointers.size === 0) {
+      const here = localPoint(event);
+      const name = pick(here.x, here.y, hitboxes, lastActors);
+      hooks.onPick(name);
+    }
+    if (pointers.size === 0) dragging = false;
+  }
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
+  canvas.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    const here = localPoint(event);
+    const factor = event.deltaY > 0 ? 1 / 1.08 : 1.08;
+    zoomAt(here.x, here.y, cam.z * factor);
+    userMoved = true;
+  }, { passive: false });
+
   const observer = new ResizeObserver(() => resize());
   observer.observe(stage);
   resize();
-
-  function mentions(step, name) {
-    const hay = String(step || '').toLowerCase();
-    const token = String(name || '').toLowerCase();
-    if (!token || hay.length < token.length) return false;
-    let from = 0;
-    while (from <= hay.length - token.length) {
-      const at = hay.indexOf(token, from);
-      if (at < 0) return false;
-      const before = at === 0 || !/[\p{L}\p{N}_]/u.test(hay[at - 1]);
-      const afterAt = at + token.length;
-      const after = afterAt >= hay.length || !/[\p{L}\p{N}_]/u.test(hay[afterAt]);
-      if (before && after) return true;
-      from = at + token.length;
-    }
-    return false;
-  }
-
-  function attachFloor(record, key) {
-    if (record.floorKey === key) return;
-    const level = levels.find((item) => item.key === key);
-    if (!level) return;
-    level.interior.add(record.visual.root);
-    record.floorKey = key;
-    const index = levels.indexOf(level);
-    if (index >= 0 && index !== active) setFloor(index);
-  }
-
-  function approach(fromX, fromZ, toX, toZ, faceX, faceZ) {
-    const dx = fromX - toX;
-    const dz = fromZ - toZ;
-    const dist = Math.hypot(dx, dz) || 1;
-    const keep = Math.min(0.72, dist);
-    return {
-      x: toX + (dx / dist) * keep,
-      z: toZ + (dz / dist) * keep,
-      faceX: faceX == null ? toX : faceX,
-      faceZ: faceZ == null ? toZ : faceZ,
-    };
-  }
-
-  function namedPartner(record, presentation) {
-    if (presentation.status !== 'working' && presentation.status !== 'waiting_user') return null;
-    const names = records
-      .map((item) => item.name)
-      .filter((name) => name !== record.name)
-      .sort((a, b) => b.length - a.length);
-    const hit = names.find((name) => mentions(presentation.step, name));
-    return hit ? records.find((item) => item.name === hit) : null;
-  }
-
-  function spotNear(record, x, z, faceX, faceZ) {
-    return approach(record.visual.root.position.x, record.visual.root.position.z, x, z, faceX, faceZ);
-  }
-
-  function planMotion(record, presentation) {
-    const partner = namedPartner(record, presentation);
-    const errandKey = partner ? `${partner.name}|${presentation.step}` : '';
-    if (!record.trip && partner && record.finishedErrand !== errandKey) {
-      record.trip = { phase: 'stand', since: elapsed, kind: 'bot', partnerName: partner.name, key: errandKey };
-    }
-    if (!record.trip && !partner && !record.office && presentation.status === 'idle' && record.homeKey === '__ops__' && elapsed > 24) {
-      const mates = records.filter((item) => item.homeKey === '__ops__');
-      const index = mates.findIndex((item) => item.name === record.name);
-      const period = 22;
-      const clockT = (elapsed - 24) % (period * Math.max(mates.length, 1));
-      if (Math.floor(clockT / period) === index && (clockT % period) < 2) {
-        record.trip = { phase: 'stand', since: elapsed, kind: 'coffee', key: `coffee-${Math.floor(elapsed)}` };
-      }
-    }
-    if (record.office) {
-      const idle = presentation.status === 'idle';
-      const spot = idle ? record.office.sofa : record.office.desk;
-      const face = idle ? record.office.sofaFace : record.office.deskFace;
-      record.seat.x = spot.x;
-      record.seat.z = spot.z;
-      record.face = face;
-      if (record.trip && record.trip.kind === 'board' && idle) record.trip = null;
-    }
-    if (!record.trip && record.office && presentation.status === 'working' && !partner && elapsed > record.nextBoard) {
-      record.trip = { phase: 'out', since: elapsed, kind: 'board', key: `board-${Math.floor(elapsed)}` };
-      record.nextBoard = elapsed + 16;
-    }
-    if (!record.trip) {
-      if (record.floorKey !== record.homeKey) attachFloor(record, record.homeKey);
-      if (record.office) {
-        const dist = Math.hypot(
-          record.visual.root.position.x - record.seat.x,
-          record.visual.root.position.z - record.seat.z,
-        );
-        return {
-          visit: { x: record.seat.x, z: record.seat.z, faceX: record.face.x, faceZ: record.face.z },
-          gait: dist > 0.2 ? 'walk' : 'sit',
-          nod: 0,
-        };
-      }
-      return { visit: null, gait: 'sit', nod: 0 };
-    }
-    const trip = record.trip;
-    const age = elapsed - trip.since;
-    const next = (phase) => {
-      trip.phase = phase;
-      trip.since = elapsed;
-    };
-    if (trip.kind === 'bot') {
-      const who = records.find((item) => item.name === trip.partnerName);
-      if (trip.phase === 'stand') {
-        if (age >= 0.25 && who) {
-          attachFloor(record, who.floorKey);
-          trip.spot = approach(record.seat.x, record.seat.z, who.visual.root.position.x, who.visual.root.position.z, who.visual.root.position.x, who.visual.root.position.z);
-          next('out');
-        }
-        return { visit: null, gait: 'stand', nod: 0 };
-      }
-      if (trip.phase === 'out' && trip.spot) {
-        const visit = trip.spot;
-        if (Math.hypot(record.visual.root.position.x - visit.x, record.visual.root.position.z - visit.z) < 0.12) next('pause');
-        return { visit, gait: 'walk', nod: 0 };
-      }
-      if (trip.phase === 'pause') {
-        if (age >= 1.3) next('back');
-        return { visit: trip.spot || null, gait: 'stand', nod: Math.min(age / 0.7, 1) };
-      }
-      if (trip.phase === 'back') {
-        if (record.floorKey !== record.homeKey) attachFloor(record, record.homeKey);
-        if (Math.hypot(record.visual.root.position.x - record.seat.x, record.visual.root.position.z - record.seat.z) < 0.12) next('sit');
-        return { visit: null, gait: 'walk', nod: 0 };
-      }
-    } else if (trip.kind === 'board' && record.office) {
-      const spot = {
-        x: record.office.boardSpot.x,
-        z: record.office.boardSpot.z,
-        faceX: record.office.boardFace.x,
-        faceZ: record.office.boardFace.z,
-      };
-      if (trip.phase === 'out') {
-        if (Math.hypot(record.visual.root.position.x - spot.x, record.visual.root.position.z - spot.z) < 0.16) next('pause');
-        return { visit: spot, gait: 'walk', nod: 0 };
-      }
-      if (trip.phase === 'pause') {
-        if (age >= 1.3) next('back');
-        return { visit: spot, gait: 'stand', nod: Math.min(age / 0.7, 1) };
-      }
-      if (trip.phase === 'back') {
-        if (Math.hypot(record.visual.root.position.x - record.seat.x, record.visual.root.position.z - record.seat.z) < 0.16) next('sit');
-        return { visit: null, gait: 'walk', nod: 0 };
-      }
-    } else if (trip.phase === 'stand') {
-      if (age >= 0.25) next('out');
-      return { visit: null, gait: 'stand', nod: 0 };
-    } else if (trip.phase === 'out') {
-      const visit = { x: 4.05, z: 1.82, faceX: 4.35, faceZ: 2.55 };
-      if (Math.hypot(record.visual.root.position.x - visit.x, record.visual.root.position.z - visit.z) < 0.16) {
-        trip.spot = visit;
-        next('pause');
-      }
-      return { visit, gait: 'walk', nod: 0 };
-    } else if (trip.phase === 'pause') {
-      if (age >= 1.25) next('back');
-      return { visit: trip.spot, gait: 'stand', nod: Math.min(age / 0.7, 1) };
-    } else if (trip.phase === 'back') {
-      if (Math.hypot(record.visual.root.position.x - record.seat.x, record.visual.root.position.z - record.seat.z) < 0.16) next('sit');
-      return { visit: null, gait: 'walk', nod: 0 };
-    }
-    if (age >= 0.28) {
-      record.finishedErrand = trip.key;
-      record.trip = null;
-    }
-    return { visit: null, gait: 'sit', nod: 0 };
-  }
-
-  function loop() {
-    const dt = Math.min(clock.getDelta(), 0.05);
-    elapsed += dt;
-    frames += 1;
-    const now = Date.now();
-    if (motion) {
-      const t = motion.dur <= 0 ? 1 : Math.min(1, (performance.now() - motion.start) / motion.dur);
-      const eased = reduce ? 1 : easeInOut(t);
-      applyPose(motion.from.map((item, index) => ({
-        y: item.y + (motion.to[index].y - item.y) * eased,
-        h: item.h + (motion.to[index].h - item.h) * eased,
-      })));
-      if (t >= 1) motion = null;
-    }
-
-    const totalH = levels.reduce((sum, level) => sum + level.h, 0) || SLAB;
-    posts.forEach((post) => {
-      post.scale.y = totalH;
-      post.position.y = totalH / 2;
-    });
-    shaftGlass.scale.y = Math.max(totalH, 0.01);
-    shaftGlass.position.y = totalH / 2;
-    elevBars.forEach((bar, index) => {
-      const level = levels[index];
-      bar.visible = !!level;
-      if (level) bar.position.y = level.y + 0.34;
-    });
-
-    const open = levels[active];
-    const focusY = open ? open.y + open.h * 0.46 : 1.2;
-    desiredTarget.set(0, focusY, 0.15);
-    if (!snapped) {
-      controls.target.copy(desiredTarget);
-      camera.position.copy(desiredTarget).add(ISO);
-      camera.lookAt(controls.target);
-      snapped = true;
-    } else if (phoneLayout()) {
-      controls.target.set(desiredTarget.x + pan.x, desiredTarget.y, desiredTarget.z + pan.z);
-      camera.position.copy(controls.target).add(ISO);
-      camera.lookAt(controls.target);
-    } else {
-      controls.target.y = desiredTarget.y;
-      controls.target.z = desiredTarget.z;
-    }
-    if (zoomAnim) {
-      const t = Math.min(1, (performance.now() - zoomAnim.start) / zoomAnim.dur);
-      const eased = 1 - (1 - t) ** 3;
-      camera.zoom = zoomAnim.from + (zoomAnim.to - zoomAnim.from) * eased;
-      if (t >= 1) zoomAnim = null;
-      camera.updateProjectionMatrix();
-    }
-    if (!phoneLayout()) controls.update();
-
-    for (const api of roomApis) api.update(state, now);
-    const lines = screenLines();
-    lines.offset.y = (elapsed * 0.07) % 1;
-
-    for (const record of records) {
-      const level = levels.find((item) => item.key === record.floorKey);
-      const shown = level && level.interior.visible;
-      record.visual.root.visible = !!shown;
-      const presentation = presentBot(state?.bots[record.name], now, record.name);
-      const mode = visualMode(presentation);
-      const plan = planMotion(record, presentation);
-      updateCharacter(record.visual, {
-        dt,
-        t: elapsed,
-        mode,
-        reduce,
-        celebrateT: mode === 'celebrate' ? Math.min(1, presentation.age / DONE_MS) : 0,
-        seat: record.seat,
-        visit: plan.visit,
-        gait: plan.gait,
-        nod: plan.nod,
-        face: record.face,
-        showStep: selected === record.name,
-        showName: hovered === record.name || selected === record.name,
-        step: presentation.step,
-        status: presentation.status,
-        hovered: hovered === record.name,
-        selected: selected === record.name,
-        hold: !!motion || dragging,
-      });
-      const screen = record.screenMat;
-      if (screen) paintScreen(screen, presentation.status, record.visual.bodyMat.color, elapsed, record.visual.phase);
-      if (record.office) record.office.paintScreens(presentation.status, record.visual.bodyMat.color, elapsed, record.visual.phase);
-    }
-    ring.visible = false;
-
-    sun.target.position.set(0, focusY, 0);
-    sun.target.updateMatrixWorld();
-    renderer.render(scene, camera);
-    labelRenderer.render(scene, camera);
-    if (frames === 1) document.body.dataset.ready = '1';
-    document.body.dataset.zoom = camera.zoom.toFixed(3);
-  }
-
-  renderer.setAnimationLoop(loop);
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) renderer.setAnimationLoop(null);
-    else {
-      clock.getDelta();
-      renderer.setAnimationLoop(loop);
-    }
-  });
+  frame(BUILDING, 8);
+  framed = true;
+  requestAnimationFrame(loop);
 
   return {
-    setState,
-    setFloor,
-    focusBot,
-    clearBot,
-    zoom,
+    setState(next) {
+      state = next;
+      syncSeats();
+    },
+    setFloor(index) {
+      const changed = framed && index !== active;
+      active = index;
+      if (!changed) return;
+      userMoved = false;
+      frameFloor(index);
+    },
+    focusBot(name) {
+      const changed = selected !== name;
+      selected = name || null;
+      if (!changed || !name) return;
+      const agent = agents.get(name);
+      if (!agent) return;
+      const p = project(agent.x, agent.y);
+      if (p.x > 48 && p.y > 48 && p.x < viewW - 48 && p.y < viewH - 48) return;
+      camTo.x = agent.x;
+      camTo.y = agent.y;
+      userMoved = true;
+    },
+    clearBot() {
+      selected = null;
+    },
+    zoom(direction) {
+      zoomAt(viewW / 2, viewH / 2, cam.z * (direction > 0 ? 1.18 : 1 / 1.18));
+      userMoved = true;
+    },
     setReduce(value) {
       reduce = !!value;
     },
     resize,
-  };
-}
-
-function blankOffice() {
-  return {
-    setState() {},
-    setFloor() {},
-    focusBot() {},
-    clearBot() {},
-    zoom() {},
-    setReduce() {},
-    resize() {},
   };
 }
