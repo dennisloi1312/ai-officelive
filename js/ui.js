@@ -58,6 +58,46 @@ function countLine(parts) {
   }).join(' · ');
 }
 
+export const USAGE_REFRESH_LABEL = '手動刷新用量';
+
+function refreshIcon() {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '16');
+  svg.setAttribute('height', '16');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('class', 'usage-refresh-icon');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', 'currentColor');
+  path.setAttribute('stroke-width', '2');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  path.setAttribute('d', 'M21 12a9 9 0 1 1-2.6-6.3M21 3v6h-6');
+  svg.appendChild(path);
+  return svg;
+}
+
+export function usageRefreshButton(onRefresh) {
+  const button = el('button', 'usage-refresh');
+  button.type = 'button';
+  button.append(refreshIcon(), document.createTextNode(USAGE_REFRESH_LABEL));
+  button.addEventListener('click', () => {
+    if (button.dataset.busy === '1') return;
+    const pending = typeof onRefresh === 'function' ? onRefresh() : null;
+    if (pending && typeof pending.then === 'function') {
+      button.dataset.busy = '1';
+      button.setAttribute('aria-busy', 'true');
+      pending.finally(() => {
+        if (button.isConnected === false) return;
+        button.dataset.busy = '0';
+        button.removeAttribute('aria-busy');
+      });
+    }
+  });
+  return button;
+}
+
 export function mountUI(hooks) {
   const conn = document.getElementById('conn');
   const banner = document.getElementById('banner');
@@ -341,6 +381,7 @@ export function mountUI(hooks) {
       const ago = el('p', 'usage-updated', updatedAgo(usage.updated_at, now));
       card.append(plan, ago);
     }
+    card.appendChild(usageRefreshButton(() => hooks.onRefreshUsage && hooks.onRefreshUsage()));
     const phone = window.matchMedia('(max-width: 640px)').matches;
     const dock = document.getElementById('usage-dock');
     if (phone && dock) dock.replaceChildren(card);

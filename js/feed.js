@@ -42,17 +42,17 @@ function topicUrl(topic, suffix) {
   return `${NTFY_ORIGIN}/${encodeURIComponent(topic)}${suffix}`;
 }
 
-async function pollTopic(topic, signal) {
-  const response = await fetch(topicUrl(topic, '/json?poll=1&since=12h'), {
-    cache: 'no-store',
-    referrerPolicy: 'no-referrer',
-    signal,
-  });
-  if (response.status === 404) return [];
-  if (!response.ok) throw new Error(`ntfy ${response.status}`);
-  const text = await response.text();
+/** Read-only replay of the last 12 hours. Never writes to the topic. */
+export function pollRequest(topic) {
+  return {
+    method: 'GET',
+    url: topicUrl(topic, '/json?poll=1&since=12h'),
+  };
+}
+
+function parseEvents(text) {
   const events = [];
-  for (const line of text.split('\n')) {
+  for (const line of String(text || '').split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
@@ -63,6 +63,26 @@ async function pollTopic(topic, signal) {
   }
   events.sort((a, b) => (Number(a.time) || 0) - (Number(b.time) || 0));
   return events;
+}
+
+async function pollTopic(topic, signal) {
+  const request = pollRequest(topic);
+  const response = await fetch(request.url, {
+    method: request.method,
+    cache: 'no-store',
+    referrerPolicy: 'no-referrer',
+    signal,
+  });
+  if (response.status === 404) return [];
+  if (!response.ok) throw new Error(`ntfy ${response.status}`);
+  return parseEvents(await response.text());
+}
+
+/** Usage present in a replay. Null when the replay has no usage payload. */
+export function usageFromEvents(events) {
+  const scratch = createEmptyState();
+  for (const event of events || []) applyEvent(scratch, event);
+  return scratch.usage;
 }
 
 function rememberFactory() {
@@ -81,7 +101,11 @@ function rememberFactory() {
 export function watchDemo(handlers) {
   handlers.onStatus('demo');
   handlers.onState(createDemoState(), { sound: false });
-  return function stop() {};
+  function stop() {}
+  stop.refresh = async function refresh() {
+    return { ok: true, usage: null };
+  };
+  return stop;
 }
 
 /**
@@ -99,6 +123,8 @@ export function watchTopic(topic, handlers) {
   let source = null;
   let timer = 0;
   let pollAbort = null;
+  let refreshAbort = null;
+  let refreshTask = null;
   let backoff = 1000;
   let saveTimer = 0;
   const state = createEmptyState();
@@ -182,14 +208,42 @@ export function watchTopic(topic, handlers) {
     }
   }
 
+  async function refresh() {
+    if (stopped) return { ok: false, usage: state.usage };
+    if (refreshTask) return refreshTask;
+    refreshTask = (async () => {
+      if (refreshAbort) refreshAbort.abort();
+      const controller = new AbortController();
+      refreshAbort = controller;
+      try {
+        const events = await pollTopic(topic, controller.signal);
+        if (stopped || refreshAbort !== controller) return { ok: false, usage: state.usage };
+        for (const event of events) ingest(event);
+        state.usage = usageFromEvents(events);
+        publish(false);
+        return { ok: true, usage: state.usage };
+      } catch (err) {
+        if (stopped || err?.name === 'AbortError') return { ok: false, usage: state.usage };
+        return { ok: false, usage: state.usage };
+      } finally {
+        if (refreshAbort === controller) refreshAbort = null;
+        refreshTask = null;
+      }
+    })();
+    return refreshTask;
+  }
+
   bootstrap();
 
-  return function stop() {
+  function stop() {
     stopped = true;
     window.clearTimeout(timer);
     window.clearTimeout(saveTimer);
     if (pollAbort) pollAbort.abort();
+    if (refreshAbort) refreshAbort.abort();
     if (source) source.close();
     source = null;
-  };
+  }
+  stop.refresh = refresh;
+  return stop;
 }

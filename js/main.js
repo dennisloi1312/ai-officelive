@@ -39,6 +39,10 @@ const ui = mountUI({
     ui.setSound(on);
     if (on) sound.blip('working');
   },
+  onRefreshUsage() {
+    if (typeof stopFeed.refresh === 'function') return stopFeed.refresh();
+    return null;
+  },
 });
 
 function paint() {
