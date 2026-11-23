@@ -17,6 +17,7 @@ import {
   visibleDesks,
 } from './layout.js';
 import { advanceAgent, createAgent, namedPartner } from './motion.js';
+import { NAME_CHARS, SPRITE_SCALE, layoutNameplates, nameplateText } from './nameplates.js';
 import { floorPlan, hashName, lookFor, presentBot } from './state.js';
 
 const STATUS_COLOR = {
@@ -59,25 +60,30 @@ function shapeOf(kind) {
   return SHAPES[kind] || SHAPES.sphere;
 }
 
-function blit(ctx, mask, cx, cy, color, outline = '#142018') {
+function blit(ctx, mask, cx, cy, color, outline = '#142018', scale = SPRITE_SCALE) {
   const h = mask.length;
   const w = mask[0].length;
-  const x0 = Math.round(cx - w / 2);
-  const y0 = Math.round(cy - h / 2);
+  const x0 = cx - (w * scale) / 2;
+  const y0 = cy - (h * scale) / 2;
   ctx.fillStyle = outline;
   for (let y = 0; y < h; y += 1) {
     for (let x = 0; x < w; x += 1) {
       if (mask[y][x] !== '#') continue;
-      ctx.fillRect(x0 + x + 1, y0 + y + 1, 1, 1);
+      ctx.fillRect(x0 + (x + 1) * scale, y0 + (y + 1) * scale, scale, scale);
     }
   }
   ctx.fillStyle = color;
   for (let y = 0; y < h; y += 1) {
     for (let x = 0; x < w; x += 1) {
-      if (mask[y][x] === '#') ctx.fillRect(x0 + x, y0 + y, 1, 1);
+      if (mask[y][x] === '#') ctx.fillRect(x0 + x * scale, y0 + y * scale, scale, scale);
     }
   }
-  return { x: x0, y: y0, w, h };
+  return { x: x0, y: y0, w: w * scale, h: h * scale, scale };
+}
+
+function stamp(ctx, body, lx, ly, w, h) {
+  const scale = body.scale || SPRITE_SCALE;
+  ctx.fillRect(body.x + lx * scale, body.y + ly * scale, w * scale, h * scale);
 }
 
 function checker(ctx, rect, a, b, size = 8) {
@@ -92,11 +98,14 @@ function checker(ctx, rect, a, b, size = 8) {
 }
 
 function ring(ctx, cx, cy, radius, color) {
+  const scale = SPRITE_SCALE;
+  const r = radius * scale;
+  const dot = 2 * scale;
   ctx.fillStyle = color;
   const steps = 20;
   for (let i = 0; i < steps; i += 1) {
     const angle = (i / steps) * Math.PI * 2;
-    ctx.fillRect(Math.round(cx + Math.cos(angle) * radius), Math.round(cy + Math.sin(angle) * radius), 2, 2);
+    ctx.fillRect(Math.round(cx + Math.cos(angle) * r), Math.round(cy + Math.sin(angle) * r), dot, dot);
   }
 }
 
@@ -193,33 +202,31 @@ function drawBot(ctx, actor, time, reduce) {
   const color = STATUS_COLOR[actor.status] || STATUS_COLOR.idle;
   ring(ctx, actor.x, actor.y, actor.selected ? 9 : 8, actor.selected ? '#FFFFFF' : color);
   if (actor.selected) ring(ctx, actor.x, actor.y, 11, color);
-  const bob = actor.walking && !reduce ? Math.sin(time * 10 + actor.phase) * 1 : 0;
+  const bob = actor.walking && !reduce ? Math.sin(time * 10 + actor.phase) * SPRITE_SCALE : 0;
   const mask = shapeOf(actor.look.shape);
   const body = blit(ctx, mask, actor.x + bob, actor.y, actor.look.color);
-  const eyeY = body.y + 2;
-  const eyeX = body.x + Math.round(body.w / 2);
   const ox = actor.face === 'e' ? 1 : actor.face === 'w' ? -1 : 0;
   const oy = actor.face === 's' ? 1 : 0;
   ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(eyeX - 3 + ox, eyeY + oy, 2, 2);
-  ctx.fillRect(eyeX + 1 + ox, eyeY + oy, 2, 2);
+  stamp(ctx, body, 1 + ox, 2 + oy, 2, 2);
+  stamp(ctx, body, 5 + ox, 2 + oy, 2, 2);
   ctx.fillStyle = '#1A1A1A';
-  ctx.fillRect(eyeX - 2 + ox, eyeY + 1 + oy, 1, 1);
-  ctx.fillRect(eyeX + 2 + ox, eyeY + 1 + oy, 1, 1);
+  stamp(ctx, body, 2 + ox, 3 + oy, 1, 1);
+  stamp(ctx, body, 6 + ox, 3 + oy, 1, 1);
   const accessory = actor.look.accessory;
   if (accessory === 'antenna' || accessory === 'stem') {
     ctx.fillStyle = accessory === 'stem' ? '#2F8A3E' : '#1A1A1A';
-    ctx.fillRect(eyeX, body.y - 3, 1, 3);
+    stamp(ctx, body, 4, -3, 1, 3);
     ctx.fillStyle = accessory === 'stem' ? '#3EAF4E' : actor.look.color;
-    ctx.fillRect(eyeX - 1, body.y - 5, 3, 2);
+    stamp(ctx, body, 3, -5, 3, 2);
   } else if (accessory === 'glasses') {
     ctx.fillStyle = '#1A1A1A';
-    ctx.fillRect(eyeX - 4 + ox, eyeY + oy, 3, 1);
-    ctx.fillRect(eyeX + 1 + ox, eyeY + oy, 3, 1);
+    stamp(ctx, body, ox, 2 + oy, 3, 1);
+    stamp(ctx, body, 5 + ox, 2 + oy, 3, 1);
   } else if (accessory === 'bow') {
     ctx.fillStyle = '#F2A3C7';
-    ctx.fillRect(body.x + body.w - 2, eyeY, 3, 2);
-    ctx.fillRect(body.x + body.w - 1, eyeY + 2, 2, 1);
+    stamp(ctx, body, mask[0].length - 2, 2, 3, 2);
+    stamp(ctx, body, mask[0].length - 1, 4, 2, 1);
   }
 }
 
@@ -508,9 +515,32 @@ export function createOffice(stage, hooks) {
     }
   }
 
+  function screenRect(rect) {
+    const p = project(rect.x, rect.y);
+    const q = project(rect.x + rect.w, rect.y + rect.h);
+    return {
+      x: Math.min(p.x, q.x),
+      y: Math.min(p.y, q.y),
+      w: Math.abs(q.x - p.x),
+      h: Math.abs(q.y - p.y),
+    };
+  }
+
+  function zoomAvoid() {
+    const zoom = document.querySelector('.zoom');
+    if (!zoom) return null;
+    const zr = zoom.getBoundingClientRect();
+    const sr = stage.getBoundingClientRect();
+    if (!zr.width || !zr.height) return null;
+    return { x: zr.left - sr.left, y: zr.top - sr.top, w: zr.width, h: zr.height };
+  }
+
   function layoutLabels(actors, hitboxes) {
     const boxes = [];
     const keep = new Set();
+    const tagInputs = [];
+    const narrow = window.matchMedia('(max-width: 640px)').matches;
+    const roomOf = new Map(assignments.map((seat) => [seat.name, seat.room]));
     for (const sign of SIGNS) {
       const key = `sign:${sign.id}`;
       keep.add(key);
@@ -536,26 +566,26 @@ export function createOffice(stage, hooks) {
       const stateEl = tag.querySelector('.map-state') || el('span', 'map-state');
       if (!tag.contains(name)) tag.append(name, stateEl);
       name.dir = 'auto';
-      if (name.textContent !== actor.name) name.textContent = actor.name;
+      const plate = nameplateText(actor.name, narrow ? NAME_CHARS.narrow : NAME_CHARS.wide);
+      if (name.textContent !== plate) name.textContent = plate;
       const word = STATUS_WORD[actor.status] || 'Resting';
       stateEl.className = `map-state tone-${actor.status === 'waiting_user' ? 'waiting' : actor.status}`;
       if (stateEl.textContent !== word) stateEl.textContent = word;
       stateEl.hidden = cam.z < 1.25;
       const tw = tag.offsetWidth || 72;
       const th = tag.offsetHeight || 28;
-      const below = Math.max(14, 10 * cam.z);
-      boxes.push({
-        kind: 'tag',
+      const below = Math.max(14, 10 * SPRITE_SCALE * cam.z);
+      tagInputs.push({
         el: tag,
-        x: p.x - tw / 2,
-        y: p.y + below,
+        name: actor.name,
+        room: roomOf.get(actor.name) || '',
         w: tw,
         h: th,
-        fixed: false,
-        pri: actor.selected || actor.hovered ? 4 : 1,
         ax: p.x - tw / 2,
         ay: p.y + below,
-        name: actor.name,
+        anchorX: p.x,
+        anchorY: p.y,
+        pri: actor.selected || actor.hovered ? 4 : 1,
       });
       const mark = actor.status === 'waiting_user' ? '!' : actor.status === 'error' ? '×' : actor.status === 'done' ? '✓' : '';
       if (mark) {
@@ -597,6 +627,37 @@ export function createOffice(stage, hooks) {
         });
       }
     }
+    const rooms = {};
+    let hall = null;
+    for (const floor of FLOORS) {
+      const rect = screenRect(floor);
+      if (floor.id === 'hhall') hall = rect;
+      else if (floor.id === 'research' || floor.id === 'webdev' || floor.id === 'ops' || floor.id === 'design') {
+        rooms[floor.id] = rect;
+      }
+    }
+    const placedTags = layoutNameplates(tagInputs, {
+      rooms,
+      hall,
+      viewW,
+      viewH,
+      avoid: zoomAvoid(),
+    });
+    for (const tag of placedTags) {
+      boxes.push({
+        kind: 'tag',
+        el: tag.el,
+        x: tag.x,
+        y: tag.y,
+        w: tag.w,
+        h: tag.h,
+        fixed: true,
+        pri: tag.pri,
+        ax: tag.x,
+        ay: tag.y,
+        name: tag.name,
+      });
+    }
     hideStale('sign:', keep);
     hideStale('tag:', keep);
     hideStale('mark:', keep);
@@ -604,10 +665,10 @@ export function createOffice(stage, hooks) {
     hideStale('step:', keep);
     const sprites = actors.map((actor) => {
       const p = project(actor.x, actor.y);
-      const radius = Math.max(11, 8 * cam.z);
+      const radius = Math.max(11, 8 * cam.z) * SPRITE_SCALE;
       return { x: p.x - radius, y: p.y - radius, w: radius * 2, h: radius * 2, fixed: true, pri: 0 };
     });
-    separate([...boxes, ...sprites]);
+    separate(boxes.filter((box) => box.kind !== 'tag').concat(sprites));
     const zzz = boxes.filter((box) => box.kind === 'zzz');
     const nudgeZzz = () => {
       for (let pass = 0; pass < 16; pass += 1) {
@@ -642,23 +703,6 @@ export function createOffice(stage, hooks) {
       box.y = Math.max(2, Math.min(viewH - box.h - 2, box.y));
     }
     nudgeZzz();
-    const tags = boxes.filter((box) => box.kind === 'tag' && !box.hidden);
-    for (const tag of tags) {
-      for (const sprite of sprites) {
-        if (overlaps(tag, sprite)) tag.y = sprite.y + sprite.h + 2;
-      }
-    }
-    tags.sort((a, b) => b.pri - a.pri);
-    const dropped = new Set();
-    for (const tag of tags) {
-      const blocked = tags.some((other) => other !== tag && !dropped.has(other) && overlaps(tag, other))
-        || boxes.some((other) => other.fixed && !other.hidden && overlaps(tag, other));
-      if (blocked) {
-        tag.el.hidden = true;
-        tag.hidden = true;
-        dropped.add(tag);
-      }
-    }
     for (const box of boxes) {
       if (box.hidden) continue;
       box.el.style.left = `${Math.round(box.x)}px`;
